@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VNPost CDP – Customer Data Platform</title>
+  <meta name="description" content="VNPost Customer Data Platform – Nền tảng quản lý dữ liệu khách hàng hợp nhất" />
+
+  <!-- Bootstrap 5 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+  <!-- Font Awesome 6 -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet" />
+
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+<!-- Toast Container -->
+<div id="toastContainer" style="position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px"></div>
+
+<!-- App Wrapper -->
+<div class="app-wrapper">
+
+  <!-- ============================================================
+       SIDEBAR
+  ============================================================ -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon"><i class="fas fa-mail-bulk"></i></div>
+      <div class="logo-text">
+        <h2>VNPost CDP</h2>
+        <span>Customer Data Platform</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav" id="sidebarNav">
+      <!-- Built by JS -->
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-user">
+        <div class="user-avatar-sm">A</div>
+        <div class="user-info">
+          <div class="user-name">Admin VNPost</div>
+          <div class="user-role">CDP Administrator</div>
+        </div>
+        <i class="fas fa-ellipsis-v" style="color:rgba(255,255,255,.4);font-size:12px"></i>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============================================================
+       MAIN CONTENT
+  ============================================================ -->
+  <div class="main-content">
+
+    <!-- HEADER -->
+    <header class="app-header">
+      <div class="header-title">
+        <h1 id="headerTitle">Dashboard</h1>
+        <p id="headerSub">Tổng quan hệ thống VNPost CDP</p>
+      </div>
+
+      <div class="header-actions">
+        <div style="font-size:11px;color:var(--text-muted);background:var(--bg-hover);padding:5px 12px;border-radius:6px;border:1px solid var(--border)">
+          <i class="fas fa-circle" style="color:var(--success);font-size:8px;margin-right:6px"></i>
+          Hệ thống hoạt động tốt
+        </div>
+        <button class="header-btn" data-tooltip="Thông báo">
+          <i class="fas fa-bell"></i>
+          <span class="notification-dot"></span>
+        </button>
+        <button class="header-btn" data-tooltip="Cài đặt">
+          <i class="fas fa-cog"></i>
+        </button>
+        <div class="header-avatar" data-tooltip="Admin VNPost">A</div>
+      </div>
+    </header>
+
+    <!-- PAGE CONTENT -->
+    <main class="page-content">
+
+      <!-- ==================================================
+           PAGE: DASHBOARD
+      ================================================== -->
+      <section class="page-section active" id="page-dashboard">
+        <!-- Stat Cards -->
+        <div class="stat-grid stat-grid-5">
+          <div class="stat-card" style="--card-color: #1a3a6b">
+            <div class="stat-icon" style="background:rgba(26,58,107,.1);color:#1a3a6b">
+              <i class="fas fa-users"></i>
+            </div>
+            <div class="stat-body">
+              <div class="stat-label">Tổng Khách hàng</div>
+              <div class="stat-value" id="statTotalCustomers">0</div>
+              <div class="stat-change up"><i class="fas fa-arrow-up"></i> +12 tháng này</div>
+            </div>
+          </div>
+
+          <div class="stat-card" style="--card-color: #10b981">
+            <div class="stat-icon" style="background:rgba(16,185,129,.1);color:#10b981">
+              <i class="fas fa-compress-arrows-alt"></i>
+            </div>
+            <div class="stat-body">
+              <div class="stat-label">Hồ sơ hợp nhất</div>
+              <div class="stat-value" id="statMerged">0</div>
+              <div class="stat-change up"><i class="fas fa-arrow-up"></i> Identity Resolution</div>
+            </div>
+          </div>
+
+          <div class="stat-card" style="--card-color: #f59e0b">
+            <div class="stat-icon" style="background:rgba(245,166,35,.1);color:#f5a623">
+              <i class="fas fa-exclamation-triangle"></i>
+            </div>
+            <div class="stat-body">
+              <div class="stat-label">Hồ sơ nghi trùng</div>
+              <div class="stat-value" id="statSuspect">0</div>
+              <div class="stat-change" style="color:#d97706"><i class="fas fa-search"></i> Cần xem xét</div>
+            </div>
+          </div>
+
+          <div class="stat-card" style="--card-color: #3b82f6">
+            <div class="stat-icon" style="background:rgba(245,158,11,.1);color:#f59e0b">
+              <i class="fas fa-bolt"></i>
+            </div>
+            <div class="stat-body">
+              <div class="stat-label">Tổng Sự kiện</div>
+              <div class="stat-value" id="statEvents">0</div>
+              <div class="stat-change up"><i class="fas fa-arrow-up"></i> Real-time events</div>
+            </div>
+          </div>
+
+          <div class="stat-card" style="--card-color: #8b5cf6">
+            <div class="stat-icon" style="background:rgba(139,92,246,.1);color:#8b5cf6">
+              <i class="fas fa-layer-group"></i>
+            </div>
+            <div class="stat-body">
+              <div class="stat-label">Tổng Segment</div>
+              <div class="stat-value" id="statSegments">0</div>
+              <div class="stat-change up"><i class="fas fa-arrow-up"></i> Phân khúc hoạt động</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts Row 1 -->
+        <div class="chart-grid chart-grid-3" style="margin-bottom:20px">
+          <!-- Province Chart -->
+          <div class="chart-card">
+            <div class="chart-header">
+              <div>
+                <div class="chart-title">Khách hàng theo Tỉnh/Thành</div>
+                <div class="chart-subtitle">Top 12 tỉnh thành có nhiều khách hàng nhất</div>
+              </div>
+              <span class="badge-type badge-info"><i class="fas fa-map-marker-alt"></i> Địa lý</span>
+            </div>
+            <div class="province-list" id="provinceList"></div>
+          </div>
+
+          <!-- Customer Type Chart -->
+          <div class="chart-card">
+            <div class="chart-header">
+              <div>
+                <div class="chart-title">Phân loại Khách hàng</div>
+                <div class="chart-subtitle">Theo loại hồ sơ</div>
+              </div>
+            </div>
+            <div style="height:220px;position:relative">
+              <canvas id="chartCustomerType"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Event Trend Chart -->
+        <div class="chart-card" style="margin-bottom:20px">
+          <div class="chart-header">
+            <div>
+              <div class="chart-title">Sự kiện theo ngày</div>
+              <div class="chart-subtitle">14 ngày gần nhất</div>
+            </div>
+            <div class="chart-legend">
+              <div class="legend-item">
+                <div class="legend-dot" style="background:#2550a0"></div>
+                Số sự kiện
+              </div>
+            </div>
+          </div>
+          <div style="height:180px;position:relative">
+            <canvas id="chartEventTrend"></canvas>
+          </div>
+        </div>
+
+        <!-- Segment Overview + Recent Events -->
+        <div class="chart-grid" style="margin-bottom:0">
+          <!-- Segment Quick Stats -->
+          <div class="chart-card">
+            <div class="chart-header">
+              <div class="chart-title">Segments nổi bật</div>
+              <button class="btn btn-sm btn-outline" onclick="navigateTo('segments')">Xem tất cả <i class="fas fa-arrow-right"></i></button>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px" id="dashSegments">
+              <!-- Rendered by JS -->
+            </div>
+          </div>
+
+          <!-- Recent Events -->
+          <div class="chart-card">
+            <div class="chart-header">
+              <div class="chart-title">Sự kiện gần nhất</div>
+              <button class="btn btn-sm btn-outline" onclick="navigateTo('timeline')">Xem timeline <i class="fas fa-arrow-right"></i></button>
+            </div>
+            <div id="dashRecentEvents" style="display:flex;flex-direction:column;gap:8px">
+              <!-- Rendered by JS -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================================================
+           PAGE: CUSTOMERS
+      ================================================== -->
+      <section class="page-section" id="page-customers">
+        <!-- Search -->
+        <div class="table-card">
+          <div class="table-header">
+            <div>
+              <div class="table-title">
+                <i class="fas fa-users" style="color:var(--primary);margin-right:8px"></i>
+                Danh sách Khách hàng
+              </div>
+            </div>
+            <span class="table-count" id="customerCount">120 khách hàng</span>
+
+            <div class="search-group" style="margin-left:auto">
+              <div class="search-wrapper">
+                <i class="fas fa-search search-icon"></i>
+                <input type="text" class="search-input" id="searchName" placeholder="Tìm theo tên..." />
+              </div>
+              <div class="search-wrapper">
+                <i class="fas fa-phone search-icon"></i>
+                <input type="text" class="search-input" id="searchPhone" placeholder="Tìm theo SĐT..." />
+              </div>
+              <div class="search-wrapper">
+                <i class="fas fa-envelope search-icon"></i>
+                <input type="text" class="search-input" id="searchEmail" placeholder="Tìm theo email..." />
+              </div>
+              <div class="search-wrapper">
+                <i class="fas fa-id-card search-icon"></i>
+                <input type="text" class="search-input" id="searchCdpId" placeholder="CDP ID..." style="width:130px" />
+              </div>
+            </div>
+          </div>
+
+          <div style="overflow-x:auto">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Khách hàng</th>
+                  <th>CDP ID</th>
+                  <th>Số điện thoại</th>
+                  <th>Email</th>
+                  <th>Loại KH</th>
+                  <th>Cảnh báo</th>
+                  <th>Nguồn dữ liệu</th>
+                  <th>Hoạt động cuối</th>
+                  <th>Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="customerTableBody">
+              </tbody>
+            </table>
+          </div>
+
+          <div class="table-pagination">
+            <span id="paginationInfo">Hiển thị 1–15 / 120</span>
+            <div class="pagination-controls" id="customerPagination"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================================================
+           PAGE: CUSTOMER 360
+      ================================================== -->
+      <section class="page-section" id="page-c360">
+        <div class="breadcrumb-nav">
+          <button class="back-btn" onclick="navigateTo('customers')">
+            <i class="fas fa-arrow-left"></i> Danh sách khách hàng
+          </button>
+          <span class="breadcrumb-sep">/</span>
+          <span class="breadcrumb-current">Customer 360</span>
+        </div>
+
+        <div class="c360-grid">
+          <!-- LEFT COLUMN -->
+          <div class="c360-left">
+
+            <!-- Golden Record -->
+            <div class="info-card">
+              <div class="golden-record-header">
+                <div id="c360Avatar"></div>
+                <div>
+                  <div class="record-name" id="c360Name">–</div>
+                  <div class="record-id" id="c360CdpId">–</div>
+                  <div style="display:flex;gap:6px;margin-top:6px" id="c360TypeBadge"></div>
+                </div>
+              </div>
+
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:rgba(245,166,35,.08);border-radius:8px;border:1px solid rgba(245,166,35,.2)">
+                <i class="fas fa-trophy" style="color:var(--accent)"></i>
+                <span style="font-size:12px;font-weight:700;color:var(--accent)">Golden Record</span>
+                <span style="font-size:11px;color:var(--text-muted);margin-left:auto">Đã xác minh</span>
+              </div>
+
+              <div id="c360Details"></div>
+            </div>
+
+            <!-- KPI Mini -->
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px" id="c360Kpi"></div>
+
+            <!-- Identity Mapping -->
+            <div class="info-card">
+              <div class="info-card-header">
+                <div class="info-card-title">
+                  <i class="fas fa-link"></i>
+                  Identity Mapping
+                </div>
+                <span class="badge-type badge-success">Đã ánh xạ</span>
+              </div>
+              <div class="mapping-grid" id="c360Mapping"></div>
+            </div>
+
+            <!-- Segment Membership -->
+            <div class="info-card">
+              <div class="info-card-header">
+                <div class="info-card-title">
+                  <i class="fas fa-layer-group"></i>
+                  Segment Membership
+                </div>
+              </div>
+              <div class="segment-tags" id="c360Segments"></div>
+            </div>
+
+          </div>
+
+          <!-- RIGHT COLUMN -->
+          <div class="c360-right">
+            <!-- Activities + Attribute History (tabbed card) -->
+            <div class="info-card" style="flex:1">
+              <!-- Tab bar header -->
+              <div class="info-card-header">
+                <div class="card-tab-bar" id="c360TabBar">
+                  <button class="card-tab-btn active" data-tab="activities" onclick="switchC360Tab('activities')">
+                    <i class="fas fa-history"></i>
+                    Recent Activities
+                  </button>
+                  <button class="card-tab-btn" data-tab="attr-history" onclick="switchC360Tab('attr-history')">
+                    <i class="fas fa-table"></i>
+                    Lịch sử thuộc tính
+                    <span class="tab-count" id="attrHistoryCount">0</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Panel 1: Recent Activities -->
+              <div class="tab-panel active" id="panel-activities">
+                <div class="timeline" id="c360Timeline">
+                  <div class="empty-state">
+                    <i class="fas fa-history"></i>
+                    <p>Đang tải dữ liệu...</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Panel 2: Attribute Change History -->
+              <div class="tab-panel" id="panel-attr-history">
+                <div id="c360AttrHistory">
+                  <div class="history-empty">
+                    <i class="fas fa-table"></i>
+                    <p>Đang tải lịch sử...</p>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ==================================================
+           PAGE: IDENTITY RESOLUTION
+      ================================================== -->
+      <section class="page-section" id="page-identity">
+        <div class="section-header">
+          <div>
+            <div class="section-title">
+              <i class="fas fa-link" style="color:var(--primary);margin-right:8px"></i>
+              Identity Resolution
+            </div>
+            <div class="section-subtitle">Phát hiện và hợp nhất các hồ sơ khách hàng trùng lặp</div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:8px 14px;font-size:12px;color:#dc2626;font-weight:600">
+              <i class="fas fa-exclamation-circle" style="margin-right:6px"></i>
+              <span id="dupPendingCount">5</span> hồ sơ chờ xử lý
+            </div>
+          </div>
+        </div>
+
+        <div class="dup-grid" id="dupContainer">
+          <!-- Rendered by JS -->
+        </div>
+      </section>
+
+      <!-- ==================================================
+           PAGE: TIMELINE
+      ================================================== -->
+      <section class="page-section" id="page-timeline">
+        <div class="section-header">
+          <div>
+            <div class="section-title">
+              <i class="fas fa-stream" style="color:var(--primary);margin-right:8px"></i>
+              Customer Timeline
+            </div>
+            <div class="section-subtitle">Lịch sử hoạt động của tất cả khách hàng</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:260px 1fr;gap:20px">
+          <!-- Filter Panel -->
+          <div>
+            <div class="info-card" style="position:sticky;top:88px">
+              <div class="info-card-header">
+                <div class="info-card-title"><i class="fas fa-filter"></i> Lọc sự kiện</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <button class="tab-btn active" data-timeline-filter="all" style="text-align:left;width:100%;padding:8px 12px;border-radius:8px">
+                  <i class="fas fa-th-list" style="margin-right:8px;width:16px"></i> Tất cả sự kiện
+                </button>
+                <button class="tab-btn" data-timeline-filter="login" style="text-align:left;width:100%;padding:8px 12px;border-radius:8px">
+                  <i class="fas fa-sign-in-alt" style="margin-right:8px;width:16px;color:#3b82f6"></i> Đăng nhập
+                </button>
+                <button class="tab-btn" data-timeline-filter="create_order" style="text-align:left;width:100%;padding:8px 12px;border-radius:8px">
+                  <i class="fas fa-box" style="margin-right:8px;width:16px;color:#10b981"></i> Tạo đơn hàng
+                </button>
+                <button class="tab-btn" data-timeline-filter="payment" style="text-align:left;width:100%;padding:8px 12px;border-radius:8px">
+                  <i class="fas fa-credit-card" style="margin-right:8px;width:16px;color:#8b5cf6"></i> Thanh toán
+                </button>
+                <button class="tab-btn" data-timeline-filter="track_shipment" style="text-align:left;width:100%;padding:8px 12px;border-radius:8px">
+                  <i class="fas fa-truck" style="margin-right:8px;width:16px;color:#f59e0b"></i> Theo dõi đơn
+                </button>
+                <button class="tab-btn" data-timeline-filter="rate_service" style="text-align:left;width:100%;padding:8px 12px;border-radius:8px">
+                  <i class="fas fa-star" style="margin-right:8px;width:16px;color:#f59e0b"></i> Đánh giá
+                </button>
+                <button class="tab-btn" data-timeline-filter="register" style="text-align:left;width:100%;padding:8px 12px;border-radius:8px">
+                  <i class="fas fa-user-plus" style="margin-right:8px;width:16px;color:#10b981"></i> Đăng ký
+                </button>
+              </div>
+
+              <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px">
+                <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:10px">Thống kê nhanh</div>
+                <div style="display:flex;flex-direction:column;gap:8px" id="timelineStats"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Timeline -->
+          <div class="info-card">
+            <div id="globalTimeline">
+              <!-- Rendered by JS -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================================================
+           PAGE: SEGMENTS
+      ================================================== -->
+      <section class="page-section" id="page-segments">
+        <div class="section-header">
+          <div>
+            <div class="section-title">
+              <i class="fas fa-layer-group" style="color:var(--primary);margin-right:8px"></i>
+              Segment Management
+            </div>
+            <div class="section-subtitle">Quản lý các phân khúc khách hàng</div>
+          </div>
+          <button class="btn btn-primary">
+            <i class="fas fa-plus"></i> Tạo Segment mới
+          </button>
+        </div>
+
+        <div class="segment-grid" id="segmentGrid">
+          <!-- Rendered by JS -->
+        </div>
+      </section>
+
+      <!-- ==================================================
+           PAGE: RULE MANAGEMENT
+      ================================================== -->
+      <section class="page-section" id="page-rules">
+        <div class="section-header">
+          <div>
+            <div class="section-title">
+              <i class="fas fa-shield-alt" style="color:var(--primary);margin-right:8px"></i>
+              Rule Management
+            </div>
+            <div class="section-subtitle">Quản lý các quy tắc xử lý dữ liệu trong CDP</div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <div style="background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:8px 14px;font-size:12px;color:#059669;font-weight:600">
+              <i class="fas fa-check-circle" style="margin-right:6px"></i>
+              <span id="ruleActiveCount">0</span> Active Rules
+            </div>
+            <button class="btn btn-primary" onclick="showToast('Tính năng tạo Rule đang phát triển','info')">
+              <i class="fas fa-plus"></i> Tạo Rule mới
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="table-card" style="margin-bottom:16px;padding:16px 20px">
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <div class="search-wrapper" style="flex:1;min-width:200px">
+              <i class="fas fa-search search-icon"></i>
+              <input type="text" class="search-input" id="ruleSearchKeyword" placeholder="Tìm kiếm Rule..." oninput="filterRules()" />
+            </div>
+            <select class="filter-select" id="ruleFilterType" onchange="filterRules()">
+              <option value="">Tất cả loại Rule</option>
+              <option value="Identity Resolution">Identity Resolution</option>
+              <option value="Segment">Segment</option>
+              <option value="Event Processing">Event Processing</option>
+              <option value="Behavior">Behavior</option>
+            </select>
+            <select class="filter-select" id="ruleFilterStatus" onchange="filterRules()">
+              <option value="">Tất cả trạng thái</option>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+            <button class="btn btn-outline" onclick="clearRuleFilters()">
+              <i class="fas fa-times"></i> Xóa lọc
+            </button>
+          </div>
+        </div>
+
+        <!-- Rules Table -->
+        <div class="table-card">
+          <div class="table-header">
+            <div>
+              <div class="table-title">
+                <i class="fas fa-list-alt" style="color:var(--primary);margin-right:8px"></i>
+                Danh sách Rules
+              </div>
+            </div>
+            <span class="table-count" id="ruleCount">0 rules</span>
+          </div>
+
+          <div style="overflow-x:auto">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width:40px">#</th>
+                  <th>Rule Name</th>
+                  <th>Rule Type</th>
+                  <th>Description</th>
+                  <th>Status</th>
+                  <th style="text-align:center">Priority</th>
+                  <th>Created Date</th>
+                  <th style="text-align:center">Matched</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="ruleTableBody">
+              </tbody>
+            </table>
+          </div>
+
+          <div class="table-pagination">
+            <span id="rulePaginationInfo">Hiển thị 1–10 / 0</span>
+            <div class="pagination-controls" id="rulePagination"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================================================
+           PAGE: EVENT MANAGEMENT
+      ================================================== -->
+      <section class="page-section" id="page-events">
+        <div class="section-header">
+          <div>
+            <div class="section-title">
+              <i class="fas fa-bolt" style="color:var(--primary);margin-right:8px"></i>
+              Event Management
+            </div>
+            <div class="section-subtitle">Toàn bộ sự kiện thu thập từ các nguồn</div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <div style="background:rgba(37,80,160,.08);border:1px solid rgba(37,80,160,.15);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--primary);font-weight:600">
+              <i class="fas fa-database" style="margin-right:6px"></i>
+              <span id="evTotalCount">300</span> sự kiện
+            </div>
+          </div>
+        </div>
+
+        <!-- Stats Row -->
+        <div class="ev-stats-row" id="evStatsRow"></div>
+
+        <!-- Filter Bar -->
+        <div class="table-card" style="margin-bottom:16px;padding:16px 20px">
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <div class="search-wrapper" style="flex:1;min-width:200px">
+              <i class="fas fa-search search-icon"></i>
+              <input type="text" class="search-input" id="evSearchKeyword" placeholder="Tìm nhanh (Profile ID, Session, Source...)" oninput="debounceFilterEvents()" />
+            </div>
+            <select class="filter-select" id="evFilterType" onchange="filterEvents()">
+              <option value="">Tất cả Event Type</option>
+            </select>
+            <select class="filter-select" id="evFilterScope" onchange="filterEvents()">
+              <option value="">Tất cả Scope</option>
+            </select>
+            <select class="filter-select" id="evFilterSource" onchange="filterEvents()">
+              <option value="">Tất cả Source</option>
+            </select>
+            <select class="filter-select" id="evFilterTimeRange" onchange="filterEvents()">
+              <option value="">Tất cả thời gian</option>
+              <option value="1">Hôm nay</option>
+              <option value="7">7 ngày qua</option>
+              <option value="14">14 ngày qua</option>
+              <option value="30">30 ngày qua</option>
+              <option value="60">60 ngày qua</option>
+            </select>
+            <button class="btn btn-outline" onclick="clearEvFilters()">
+              <i class="fas fa-times"></i> Xóa lọc
+            </button>
+          </div>
+        </div>
+
+        <!-- Events Table -->
+        <div class="table-card">
+          <div class="table-header">
+            <div>
+              <div class="table-title">
+                <i class="fas fa-table" style="color:var(--primary);margin-right:8px"></i>
+                Danh sách Events
+              </div>
+            </div>
+            <span class="table-count" id="evCount">300 events</span>
+          </div>
+
+          <div style="overflow-x:auto">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Event Type</th>
+                  <th>Profile ID</th>
+                  <th>Session ID</th>
+                  <th>Source</th>
+                  <th>Target</th>
+                  <th>Scope</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="evTableBody">
+              </tbody>
+            </table>
+          </div>
+
+          <div class="table-pagination">
+            <span id="evPaginationInfo">Hiển thị 1–20 / 300</span>
+            <div class="pagination-controls" id="evPagination"></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ==================================================
+     MODAL: MERGE CUSTOMER (Identity Resolution page)
+================================================== -->
+<div class="modal-overlay" id="mergeModal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title">
+        <i class="fas fa-compress-arrows-alt" style="color:var(--primary);margin-right:8px"></i>
+        Xác nhận Merge Customer
+      </div>
+      <button class="modal-close" onclick="closeMergeModal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body" id="mergeModalBody">
+      <!-- Rendered by JS -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeMergeModal()">
+        <i class="fas fa-times"></i> Hủy bỏ
+      </button>
+      <button class="btn btn-accent" id="mergeConfirmBtn">
+        <i class="fas fa-compress-arrows-alt"></i> Xác nhận Merge
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================================================
+     MODAL: CUSTOMER DUPLICATE ALERT (Customer Management page)
+================================================== -->
+<div class="modal-overlay" id="customerDupModal">
+  <div class="modal-box" style="max-width:780px">
+    <div class="modal-header">
+      <div class="modal-title">
+        <i class="fas fa-search-plus" style="color:#f5a623;margin-right:8px"></i>
+        Xem & Merge – Hồ sơ nghi trùng
+      </div>
+      <button class="modal-close" onclick="closeCustomerDupModal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body" id="customerDupModalBody" style="max-height:78vh;overflow-y:auto">
+      <!-- Rendered by JS -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeCustomerDupModal()">
+        <i class="fas fa-times"></i> Đóng
+      </button>
+      <button class="btn btn-outline" id="customerDupDismissBtn" style="color:#d97706;border-color:#f5a62344;background:rgba(245,166,35,.06)">
+        <i class="fas fa-ban"></i> Bỏ qua
+      </button>
+      <button class="btn btn-accent" id="customerDupMergeBtn">
+        <i class="fas fa-compress-arrows-alt"></i> Merge Customer
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- =============================================
+     MODAL: RULE DETAIL
+============================================= -->
+<div class="modal-overlay" id="ruleDetailModal">
+  <div class="modal-box" style="max-width:680px">
+    <div class="modal-header">
+      <div class="modal-title">
+        <i class="fas fa-shield-alt" style="color:var(--primary);margin-right:8px"></i>
+        Chi tiết Rule
+      </div>
+      <button class="modal-close" onclick="closeRuleModal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body" id="ruleDetailBody" style="max-height:70vh;overflow-y:auto">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeRuleModal()">
+        <i class="fas fa-times"></i> Đóng
+      </button>
+      <button class="btn btn-primary" onclick="showToast('Chỉnh sửa Rule: tính năng đang phát triển','info')">
+        <i class="fas fa-edit"></i> Chỉnh sửa
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- =============================================
+     DRAWER: EVENT DETAIL
+============================================= -->
+<div class="ev-drawer-overlay" id="evDrawerOverlay" onclick="closeEvDrawer()"></div>
+<div class="ev-drawer" id="evDrawer">
+  <div class="ev-drawer-header">
+    <div class="ev-drawer-title">
+      <i class="fas fa-bolt" style="color:var(--primary)"></i>
+      Chi tiết Event
+    </div>
+    <button class="modal-close" onclick="closeEvDrawer()"><i class="fas fa-times"></i></button>
+  </div>
+  <div class="ev-drawer-body" id="evDrawerBody">
+  </div>
+</div>
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="data/mockData.js?v=4"></script>
+<script src="data/ruleEventData.js?v=1"></script>
+<script src="js/app.js?v=4"></script>
+
+<!-- Post-init: Render dashboard extras -->
+<script>
+// Render segment quick stats on dashboard
+function renderDashboardExtras() {
+  // Segments on dashboard
+  const dashSegEl = document.getElementById('dashSegments');
+  if (dashSegEl) {
+    dashSegEl.innerHTML = CDP_DATA.segments.map(seg => `
+      <div style="display:flex;align-items:center;gap:12px;padding:10px;border-radius:8px;border:1px solid var(--border);cursor:pointer;transition:var(--transition)"
+           onmouseenter="this.style.background='var(--bg-hover)'" onmouseleave="this.style.background=''"
+           onclick="viewSegmentMembers('${seg.id}')">
+        <div style="width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;background:${seg.color}22;color:${seg.color}">
+          <i class="fas ${seg.icon}"></i>
+        </div>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${seg.name}</div>
+          <div class="score-bar-wrap" style="margin-top:4px">
+            <div class="score-bar" style="width:${(seg.members.length/CDP_DATA.customers.length*100).toFixed(0)}%;background:${seg.color}"></div>
+          </div>
+        </div>
+        <div style="font-size:16px;font-weight:800;color:${seg.color}">${seg.members.length}</div>
+      </div>
+    `).join('');
+  }
+
+  // Recent events on dashboard
+  const dashEvEl = document.getElementById('dashRecentEvents');
+  if (dashEvEl) {
+    dashEvEl.innerHTML = CDP_DATA.events.slice(0, 8).map(e => {
+      const customer = CDP_DATA.customers.find(c => c.id === e.customerId);
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;border:1px solid var(--border-light)">
+          <div style="width:30px;height:30px;border-radius:6px;background:${e.color}22;color:${e.color};display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">
+            <i class="fas ${e.icon}"></i>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.label}</div>
+            <div style="font-size:11px;color:var(--text-muted)">${customer ? customer.name : '–'}</div>
+          </div>
+          <div style="font-size:10px;color:var(--text-muted);white-space:nowrap">${e.date}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Timeline stats
+  const tlStats = document.getElementById('timelineStats');
+  if (tlStats) {
+    const eventCounts = {};
+    CDP_DATA.events.forEach(e => {
+      eventCounts[e.type] = (eventCounts[e.type] || 0) + 1;
+    });
+    const topEvents = Object.entries(eventCounts).sort((a,b) => b[1]-a[1]).slice(0,5);
+    const maxCount = topEvents[0]?.[1] || 1;
+    const eventMeta = {
+      login: { label: 'Đăng nhập', color: '#3b82f6' },
+      create_order: { label: 'Tạo đơn', color: '#10b981' },
+      payment: { label: 'Thanh toán', color: '#8b5cf6' },
+      track_shipment: { label: 'Theo dõi', color: '#f59e0b' },
+      rate_service: { label: 'Đánh giá', color: '#f59e0b' },
+      view_product: { label: 'Xem sản phẩm', color: '#6b7280' },
+      register: { label: 'Đăng ký', color: '#10b981' },
+      update_profile: { label: 'Cập nhật', color: '#06b6d4' },
+      contact_support: { label: 'Hỗ trợ', color: '#ef4444' },
+      cancel_order: { label: 'Hủy đơn', color: '#ef4444' },
+    };
+    tlStats.innerHTML = topEvents.map(([type, count]) => {
+      const meta = eventMeta[type] || { label: type, color: '#64748b' };
+      return `
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary);margin-bottom:3px">
+            <span>${meta.label}</span><span style="font-weight:700">${count}</span>
+          </div>
+          <div class="score-bar-wrap">
+            <div class="score-bar" style="width:${(count/maxCount*100).toFixed(0)}%;background:${meta.color}"></div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Update pending dup count
+  const pendingCount = CDP_DATA.duplicateProfiles.filter(d => d.status === 'pending').length;
+  const el = document.getElementById('dupPendingCount');
+  if (el) el.textContent = pendingCount;
+}
+
+// Call after all scripts loaded
+window.addEventListener('load', renderDashboardExtras);
+</script>
+
+</body>
+</html>

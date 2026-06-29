@@ -1,0 +1,17 @@
+package vn.vnpost.cdp.profile.enums;
+
+public enum ProfileMatchReasonType {
+    IDENTITY_NO_MATCH,
+    PHONE_MATCH,
+    EMAIL_MATCH,
+    NAME_EXACT_MATCH,
+    NAME_SIMILAR,
+    DATE_OF_BIRTH_MATCH,
+    PROVINCE_MATCH,
+    UNIT_MATCH,
+    SOURCE_CUSTOMER_LINK,
+    BEHAVIOR_MATCH,
+    IDENTITY_CONFLICT,
+    PHONE_CONFLICT,
+    EMAIL_CONFLICT
+}
