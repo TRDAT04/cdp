@@ -8,6 +8,7 @@ import org.springframework.util.StringUtils;
 import vn.vnpost.cdp.ingestion.dto.NormalizedProfileData;
 import vn.vnpost.cdp.profile.entity.*;
 import vn.vnpost.cdp.profile.repository.*;
+import vn.vnpost.cdp.profile.service.ProfileMergeEngineService;
 import vn.vnpost.cdp.profile.service.match.ProfileMatchCandidateService;
 import vn.vnpost.cdp.security.SecurityUtils;
 import vn.vnpost.cdp.unomi.service.UnomiService;
@@ -39,6 +40,7 @@ public class ProfileMergeExecutorService {
     private final UnomiService unomiService;
     private final ObjectMapper objectMapper;
     private final ProfileMatchCandidateService matchCandidateService;
+    private final ProfileMergeEngineService profileMergeEngineService;
 
     public ProfileMergeExecutorService(
             MasterProfileRepository masterProfileRepository,
@@ -50,7 +52,8 @@ public class ProfileMergeExecutorService {
             ProfileUnomiSyncLogRepository unomiSyncLogRepository,
             UnomiService unomiService,
             ObjectMapper objectMapper,
-            ProfileMatchCandidateService matchCandidateService) {
+            ProfileMatchCandidateService matchCandidateService,
+            ProfileMergeEngineService profileMergeEngineService) {
         this.masterProfileRepository = masterProfileRepository;
         this.sourceRecordRepository = sourceRecordRepository;
         this.identityLinkRepository = identityLinkRepository;
@@ -61,6 +64,7 @@ public class ProfileMergeExecutorService {
         this.unomiService = unomiService;
         this.objectMapper = objectMapper;
         this.matchCandidateService = matchCandidateService;
+        this.profileMergeEngineService=profileMergeEngineService;
     }
 
     // =====================================================================
@@ -152,94 +156,128 @@ public class ProfileMergeExecutorService {
         // 2. Save incoming attribute values (not selected by default, selection handled below)
         saveAttributeValues(targetProfile.getId(), sourceRecord.getId(), data, false);
 
-        boolean isCrm = CRM.equalsIgnoreCase(data.getSourceSystem());
+//        boolean isCrm = CRM.equalsIgnoreCase(data.getSourceSystem());
+//
+//        // 3. Apply merge rules: CRM can update all CRM-owned fields; CMS only its own fields
+//        boolean profileUpdated = false;
 
-        // 3. Apply merge rules: CRM can update all CRM-owned fields; CMS only its own fields
+//        if (isCrm) {
+//            // CRM updates: update if incoming has a value
+//            if (StringUtils.hasText(data.getFullName())
+//                    && !data.getFullName().equals(targetProfile.getFullName())) {
+//                writeChangeLog(targetProfile.getId(), sourceRecord.getId(), data.getSourceSystem(),
+//                        "fullName", targetProfile.getFullName(), data.getFullName(),
+//                        null, data.getSourceSystem(), "SOURCE_PRIORITY",
+//                        "CRM update: fullName");
+//                targetProfile.setFullName(data.getFullName());
+//                profileUpdated = true;
+//            }
+//            if (StringUtils.hasText(data.getPhone())
+//                    && !data.getPhone().equals(targetProfile.getPhone())) {
+//                writeChangeLog(targetProfile.getId(), sourceRecord.getId(), data.getSourceSystem(),
+//                        "phone", targetProfile.getPhone(), data.getPhone(),
+//                        null, data.getSourceSystem(), "SOURCE_PRIORITY", "CRM update: phone");
+//                targetProfile.setPhone(data.getPhone());
+//                profileUpdated = true;
+//            }
+//            if (StringUtils.hasText(data.getEmail())
+//                    && !data.getEmail().equals(targetProfile.getEmail())) {
+//                writeChangeLog(targetProfile.getId(), sourceRecord.getId(), data.getSourceSystem(),
+//                        "email", targetProfile.getEmail(), data.getEmail(),
+//                        null, data.getSourceSystem(), "SOURCE_PRIORITY", "CRM update: email");
+//                targetProfile.setEmail(data.getEmail());
+//                profileUpdated = true;
+//            }
+//            if (StringUtils.hasText(data.getIdentityNo())
+//                    && !data.getIdentityNo().equals(targetProfile.getIdentityNo())) {
+//                writeChangeLog(targetProfile.getId(), sourceRecord.getId(), data.getSourceSystem(),
+//                        "identityNo", targetProfile.getIdentityNo(), data.getIdentityNo(),
+//                        null, data.getSourceSystem(), "SOURCE_PRIORITY", "CRM update: identityNo");
+//                targetProfile.setIdentityNo(data.getIdentityNo());
+//                profileUpdated = true;
+//            }
+//            if (StringUtils.hasText(data.getGender())
+//                    && !data.getGender().equals(targetProfile.getGender())) {
+//                writeChangeLog(targetProfile.getId(), sourceRecord.getId(), data.getSourceSystem(),
+//                        "gender", targetProfile.getGender(), data.getGender(),
+//                        null, data.getSourceSystem(), "SOURCE_PRIORITY", "CRM update: gender");
+//                targetProfile.setGender(data.getGender());
+//                profileUpdated = true;
+//            }
+//            if (data.getDateOfBirth() != null
+//                    && !data.getDateOfBirth().equals(targetProfile.getDateOfBirth())) {
+//                writeChangeLog(targetProfile.getId(), sourceRecord.getId(), data.getSourceSystem(),
+//                        "dateOfBirth",
+//                        targetProfile.getDateOfBirth() != null ? targetProfile.getDateOfBirth().toString() : null,
+//                        data.getDateOfBirth().toString(),
+//                        null, data.getSourceSystem(), "SOURCE_PRIORITY", "CRM update: dateOfBirth");
+//                targetProfile.setDateOfBirth(data.getDateOfBirth());
+//                profileUpdated = true;
+//            }
+//            if (StringUtils.hasText(data.getCustomerType())
+//                    && !data.getCustomerType().equals(targetProfile.getCustomerType())) {
+//                targetProfile.setCustomerType(data.getCustomerType());
+//                profileUpdated = true;
+//            }
+//            if (StringUtils.hasText(data.getProvinceCode())
+//                    && !data.getProvinceCode().equals(targetProfile.getProvinceCode())) {
+//                targetProfile.setProvinceCode(data.getProvinceCode());
+//                targetProfile.setProvinceName(data.getProvinceName());
+//                profileUpdated = true;
+//            }
+//            if (StringUtils.hasText(data.getUnitCode())
+//                    && !data.getUnitCode().equals(targetProfile.getUnitCode())) {
+//                targetProfile.setUnitCode(data.getUnitCode());
+//                targetProfile.setUnitName(data.getUnitName());
+//                profileUpdated = true;
+//            }
+//        } else {
+//            // CMS: only update fields that CRM does not own or master has no value yet
+//            // Also update lastVisitAt always (CMS-owned)
+//            if (StringUtils.hasText(data.getPhone()) && !StringUtils.hasText(targetProfile.getPhone())) {
+//                targetProfile.setPhone(data.getPhone());
+//                profileUpdated = true;
+//            }
+//            if (StringUtils.hasText(data.getEmail()) && !StringUtils.hasText(targetProfile.getEmail())) {
+//                targetProfile.setEmail(data.getEmail());
+//                profileUpdated = true;
+//            }
+//        }
+
+        // 3. Apply merge rules via rule engine (per-field, priority-based)
         boolean profileUpdated = false;
 
-        if (isCrm) {
-            // CRM updates: update if incoming has a value
-            if (StringUtils.hasText(data.getFullName())
-                    && !data.getFullName().equals(targetProfile.getFullName())) {
-                writeChangeLog(targetProfile.getId(), sourceRecord.getId(), data.getSourceSystem(),
-                        "fullName", targetProfile.getFullName(), data.getFullName(),
-                        null, data.getSourceSystem(), "SOURCE_PRIORITY",
-                        "CRM update: fullName");
-                targetProfile.setFullName(data.getFullName());
-                profileUpdated = true;
-            }
-            if (StringUtils.hasText(data.getPhone())
-                    && !data.getPhone().equals(targetProfile.getPhone())) {
-                writeChangeLog(targetProfile.getId(), sourceRecord.getId(), data.getSourceSystem(),
-                        "phone", targetProfile.getPhone(), data.getPhone(),
-                        null, data.getSourceSystem(), "SOURCE_PRIORITY", "CRM update: phone");
-                targetProfile.setPhone(data.getPhone());
-                profileUpdated = true;
-            }
-            if (StringUtils.hasText(data.getEmail())
-                    && !data.getEmail().equals(targetProfile.getEmail())) {
-                writeChangeLog(targetProfile.getId(), sourceRecord.getId(), data.getSourceSystem(),
-                        "email", targetProfile.getEmail(), data.getEmail(),
-                        null, data.getSourceSystem(), "SOURCE_PRIORITY", "CRM update: email");
-                targetProfile.setEmail(data.getEmail());
-                profileUpdated = true;
-            }
-            if (StringUtils.hasText(data.getIdentityNo())
-                    && !data.getIdentityNo().equals(targetProfile.getIdentityNo())) {
-                writeChangeLog(targetProfile.getId(), sourceRecord.getId(), data.getSourceSystem(),
-                        "identityNo", targetProfile.getIdentityNo(), data.getIdentityNo(),
-                        null, data.getSourceSystem(), "SOURCE_PRIORITY", "CRM update: identityNo");
-                targetProfile.setIdentityNo(data.getIdentityNo());
-                profileUpdated = true;
-            }
-            if (StringUtils.hasText(data.getGender())
-                    && !data.getGender().equals(targetProfile.getGender())) {
-                writeChangeLog(targetProfile.getId(), sourceRecord.getId(), data.getSourceSystem(),
-                        "gender", targetProfile.getGender(), data.getGender(),
-                        null, data.getSourceSystem(), "SOURCE_PRIORITY", "CRM update: gender");
-                targetProfile.setGender(data.getGender());
-                profileUpdated = true;
-            }
-            if (data.getDateOfBirth() != null
-                    && !data.getDateOfBirth().equals(targetProfile.getDateOfBirth())) {
-                writeChangeLog(targetProfile.getId(), sourceRecord.getId(), data.getSourceSystem(),
-                        "dateOfBirth",
-                        targetProfile.getDateOfBirth() != null ? targetProfile.getDateOfBirth().toString() : null,
-                        data.getDateOfBirth().toString(),
-                        null, data.getSourceSystem(), "SOURCE_PRIORITY", "CRM update: dateOfBirth");
-                targetProfile.setDateOfBirth(data.getDateOfBirth());
-                profileUpdated = true;
-            }
-            if (StringUtils.hasText(data.getCustomerType())
-                    && !data.getCustomerType().equals(targetProfile.getCustomerType())) {
-                targetProfile.setCustomerType(data.getCustomerType());
-                profileUpdated = true;
-            }
-            if (StringUtils.hasText(data.getProvinceCode())
-                    && !data.getProvinceCode().equals(targetProfile.getProvinceCode())) {
-                targetProfile.setProvinceCode(data.getProvinceCode());
-                targetProfile.setProvinceName(data.getProvinceName());
-                profileUpdated = true;
-            }
-            if (StringUtils.hasText(data.getUnitCode())
-                    && !data.getUnitCode().equals(targetProfile.getUnitCode())) {
-                targetProfile.setUnitCode(data.getUnitCode());
-                targetProfile.setUnitName(data.getUnitName());
-                profileUpdated = true;
-            }
-        } else {
-            // CMS: only update fields that CRM does not own or master has no value yet
-            // Also update lastVisitAt always (CMS-owned)
-            if (StringUtils.hasText(data.getPhone()) && !StringUtils.hasText(targetProfile.getPhone())) {
-                targetProfile.setPhone(data.getPhone());
-                profileUpdated = true;
-            }
-            if (StringUtils.hasText(data.getEmail()) && !StringUtils.hasText(targetProfile.getEmail())) {
-                targetProfile.setEmail(data.getEmail());
-                profileUpdated = true;
-            }
-        }
-
+        profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data,"phone",
+                data.getPhone(), targetProfile.getPhone(), targetProfile::setPhone);
+        profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data, "email",
+                data.getEmail(), targetProfile.getEmail(), targetProfile::setEmail);
+        profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data, "fullName",
+                data.getFullName(), targetProfile.getFullName(), targetProfile::setFullName);
+        profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data, "identityNo",
+                data.getIdentityNo(), targetProfile.getIdentityNo(), targetProfile::setIdentityNo);
+        profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data, "gender",
+                data.getGender(), targetProfile.getGender(), targetProfile::setGender);
+        profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data, "dateOfBirth",
+                data.getDateOfBirth(), targetProfile.getDateOfBirth(), targetProfile::setDateOfBirth);
+        profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data, "customerType",
+                data.getCustomerType(), targetProfile.getCustomerType(), targetProfile::setCustomerType);
+        profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data, "provinceCode",
+                data.getProvinceCode(), targetProfile.getProvinceCode(),  value -> {
+                    targetProfile.setProvinceCode(value);
+                    if (StringUtils.hasText(data.getProvinceName())) {
+                        targetProfile.setProvinceName(data.getProvinceName());
+                    }
+                }
+        );
+        profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data, "unitCode",
+                data.getUnitCode(), targetProfile.getUnitCode(),value -> {
+                    targetProfile.setUnitCode(value);
+                    if (StringUtils.hasText(data.getUnitName())) {
+                        targetProfile.setUnitName(data.getUnitName());
+                    }
+                }
+        );
+       
         if (profileUpdated) {
             targetProfile.setLastMergedAt(LocalDateTime.now());
             masterProfileRepository.save(targetProfile);
@@ -265,6 +303,74 @@ public class ProfileMergeExecutorService {
         return targetProfile;
     }
 
+    /**
+     * Applies the rule engine decision (shouldOverwrite) for a single field.
+     * If overwrite is allowed: updates master profile, writes change log,
+     * and re-marks attribute selection (old=false, new=true) so the NEXT
+     * shouldOverwrite() call has correct currentSource to compare against.
+     */
+    private <T> boolean applyFieldRule(MasterProfile targetProfile,
+                                       ProfileSourceRecord sourceRecord,
+                                       NormalizedProfileData data,
+                                       String propertyName,
+                                       T incomingValue,
+                                       T currentValue,
+                                       java.util.function.Consumer<T> setter) {
+
+
+        if (incomingValue == null) { return false;}
+        if (incomingValue instanceof String str && !StringUtils.hasText(str)) {return false; }
+        if (incomingValue.equals(currentValue)) { return false;}
+        boolean overwrite = profileMergeEngineService.shouldOverwrite(
+                targetProfile.getId(), propertyName, data.getSourceSystem());
+
+        if (!overwrite) {
+            log.info("ProfileMergeExecutorService - overwrite BLOCKED by rule engine: profileId={}, field={}, incomingSource={}",
+                    targetProfile.getId(), propertyName, data.getSourceSystem());
+            return false;
+        }
+
+        writeChangeLog(
+                targetProfile.getId(),
+                sourceRecord.getId(),
+                data.getSourceSystem(),
+                propertyName,
+                currentValue != null ? currentValue.toString() : null,
+                incomingValue.toString(),
+                null,
+                data.getSourceSystem(),
+                "RULE_ENGINE",
+                "Rule engine allowed overwrite for " + propertyName
+        );
+
+        setter.accept(incomingValue);
+
+        markAttributeSelected(targetProfile.getId(), propertyName, data.getSourceSystem());
+
+        log.info("ProfileMergeExecutorService - field updated by rule engine: profileId={}, field={}, oldValue={}, newValue={}, newSource={}",
+                targetProfile.getId(), propertyName, currentValue, incomingValue, data.getSourceSystem());
+
+        return true;
+    }
+
+    /**
+     * Marks the incoming source's attribute value as selected for this property,
+     * and un-selects any previously selected value from other sources.
+     * This keeps shouldOverwrite()'s "currentSource" lookup accurate over time.
+     */
+    private void markAttributeSelected(Long masterProfileId, String propertyName, String newSourceSystem) {
+        List<ProfileAttributeValue> existing =
+                attributeValueRepository.findByMasterProfileIdAndPropertyName(masterProfileId, propertyName);
+
+        for (ProfileAttributeValue av : existing) {
+            boolean shouldBeSelected = av.getSourceSystem() != null
+                    && av.getSourceSystem().equalsIgnoreCase(newSourceSystem);
+            if (!Boolean.valueOf(shouldBeSelected).equals(av.getIsSelected())) {
+                av.setIsSelected(shouldBeSelected);
+            }
+        }
+        attributeValueRepository.saveAll(existing);
+    }
     // =====================================================================
     // MULTIPLE-CANDIDATE CONFLICT  (MergeDecision.CONFLICT)
     // =====================================================================

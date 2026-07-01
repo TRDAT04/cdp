@@ -1,7 +1,6 @@
 // ============================================================
 // CDP VNPost - Main Application Logic
 // ============================================================
-
 'use strict';
 
 // ---- State ----
@@ -11,24 +10,39 @@ let currentSegmentId = null;
 let currentCustomerPage = 1;
 let filteredCustomers = [];
 const PAGE_SIZE = 15;
-
+let customers = [];
 // ---- DOM Ready ----
 document.addEventListener('DOMContentLoaded', () => {
   initApp();
 });
 
-function initApp() {
+async function initApp() {
   buildSidebar();
   buildCharts();
+  try {
+
+    customers = await getProfiles();
+
+    renderCustomerList(customers);
+
+} catch (e) {
+
+    console.error(e);
+
+    customers = CDP_DATA.customers;
+
+    renderCustomerList(customers);
+
+}
   renderDashboard();
-  renderCustomerList();
   renderIdentityResolution();
   renderSegments();
   renderTimeline();
   setupSearch();
   initRules();
   initEvents();
-  navigateTo('dashboard');
+  navigateTo("dashboard");
+
 }
 
 // ============================================================
@@ -92,7 +106,7 @@ function navigateTo(page, data = null) {
   // Page-specific actions
   if (page === 'c360') {
     // If no customer passed (e.g. clicked from sidebar), use last selected or first customer
-    const customerToShow = data || selectedCustomer || CDP_DATA.customers[0];
+    const customerToShow = data || selectedCustomer || customers[0];
     selectedCustomer = customerToShow;
     renderCustomer360(customerToShow);
     // Update header subtitle with loaded customer
@@ -110,7 +124,7 @@ function navigateTo(page, data = null) {
 function updateHeader(page, data) {
   const titles = {
     dashboard: { title: 'Dashboard', sub: 'Tổng quan hệ thống VNPost CDP' },
-    customers: { title: 'Quản lý Khách hàng', sub: `${CDP_DATA.customers.length} khách hàng trong hệ thống` },
+    customers: { title: 'Quản lý Khách hàng', sub: `${customers.length} khách hàng trong hệ thống` },
     c360: { title: 'Customer 360', sub: data ? `Hồ sơ: ${data.cdpId}` : 'Xem chi tiết khách hàng' },
     identity: { title: 'Identity Resolution', sub: 'Phát hiện và hợp nhất hồ sơ trùng lặp' },
     timeline: { title: 'Customer Timeline', sub: 'Lịch sử hoạt động khách hàng' },
@@ -388,7 +402,7 @@ function filterCustomers() {
   const email = (document.getElementById('searchEmail')?.value || '').toLowerCase();
   const cdpId = (document.getElementById('searchCdpId')?.value || '').toLowerCase();
 
-  const filtered = CDP_DATA.customers.filter(c => {
+  const filtered = customers.filter(c => {
     return (!name || c.name.toLowerCase().includes(name))
       && (!phone || c.phone.includes(phone))
       && (!email || c.email.toLowerCase().includes(email))
@@ -399,7 +413,7 @@ function filterCustomers() {
 }
 
 function openCustomer360(customerId) {
-  const customer = CDP_DATA.customers.find(c => c.id === customerId);
+  const customer = customers.find(c => c.id === customerId);
   if (!customer) return;
   // navigateTo handles section switching + renderCustomer360
   navigateTo('c360', customer);
@@ -1032,7 +1046,7 @@ function viewSegmentMembers(segId) {
   // Switch to customers page with filter
   navigateTo('customers');
 
-  const members = CDP_DATA.customers.filter(c => seg.members.includes(c.id));
+  const members = customers.filter(c => seg.members.includes(c.id));
 
   // Update header
   document.getElementById('headerTitle').textContent = `Segment: ${seg.name}`;
@@ -1070,9 +1084,9 @@ function viewSegmentMembers(segId) {
 function clearSegmentFilter() {
   const bcEl = document.getElementById('segmentBreadcrumb');
   if (bcEl) bcEl.remove();
-  renderCustomerList(CDP_DATA.customers, 1);
+  renderCustomerList(customers, 1);
   document.getElementById('headerTitle').textContent = 'Quản lý Khách hàng';
-  document.getElementById('headerSub').textContent = `${CDP_DATA.customers.length} khách hàng trong hệ thống`;
+  document.getElementById('headerSub').textContent = `${customers.length} khách hàng trong hệ thống`;
 }
 
 // ============================================================
