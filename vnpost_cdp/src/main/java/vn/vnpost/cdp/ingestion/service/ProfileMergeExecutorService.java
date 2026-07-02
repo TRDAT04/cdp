@@ -498,6 +498,7 @@ public class ProfileMergeExecutorService {
         sourceRecord.setMergeStatus((short) 4); // NEED_REVIEW
         sourceRecord.setProcessedAt(LocalDateTime.now());
         sourceRecordRepository.save(sourceRecord);
+     
     }
 
     // =====================================================================
