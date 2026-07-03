@@ -41,6 +41,8 @@ public class CustomerEventProducerImpl implements CustomerEventProducer {
                 .eventType(request.getEventType())
                 .sessionId(request.getSessionId())
                 .properties(request.getProperties())
+                .source(request.getSource())
+                .target(request.getTarget())
                 .occurredAt(request.getOccurredAt() != null ? request.getOccurredAt() : LocalDateTime.now())
                 .receivedAt(LocalDateTime.now())
                 .build();

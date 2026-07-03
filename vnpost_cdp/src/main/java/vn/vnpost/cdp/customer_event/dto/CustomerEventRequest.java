@@ -14,7 +14,6 @@ import java.util.Map;
 @AllArgsConstructor
 @Builder
 public class CustomerEventRequest {
-
     @NotBlank
     private String sourceSystem;
     @NotBlank
@@ -24,4 +23,8 @@ public class CustomerEventRequest {
     private String sessionId;
     private LocalDateTime occurredAt;
     private Map<String, Object> properties;
+
+    private Map<String, Object> source;
+
+    private Map<String, Object> target;
 }

@@ -13,20 +13,14 @@ import java.util.Map;
 @AllArgsConstructor
 @Builder
 public class CustomerEventMessage {
-
     private String messageId;
-
     private String sourceSystem;
-
     private String sourceCustomerId;
-
     private String eventType;
-
     private String sessionId;
-
+    private Map<String, Object> source;
+    private Map<String, Object> target;
     private Map<String, Object> properties;
-
     private LocalDateTime occurredAt;
-
     private LocalDateTime receivedAt;
 }

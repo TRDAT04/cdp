@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.profile.entity.MasterProfile;
 import vn.vnpost.cdp.unomi.client.UnomiClient;
+import vn.vnpost.cdp.unomi.dto.UnomiEventRequest;
 import vn.vnpost.cdp.unomi.dto.UnomiProfileRequest;
 
 import java.util.HashMap;
@@ -51,5 +52,17 @@ public class UnomiServiceImpl implements UnomiService {
                         profile.getProfileCode()))
                 .doOnError(ex -> log.error("UnomiService - syncProfileToUnomi error: profileCode={}",
                         profile.getProfileCode(), ex));
+    }
+    @Override
+    public Mono<Object> sendEventToUnomi(UnomiEventRequest request) {
+        log.info("UnomiService - sendEventToUnomi: eventType={}, profileId={}",
+                request.getEventType(),
+                request.getProfileId());
+
+        return unomiClient.sendEvent(request)
+                .doOnSuccess(res ->
+                        log.info("UnomiService - sendEventToUnomi success"))
+                .doOnError(ex ->
+                        log.error("UnomiService - sendEventToUnomi error", ex));
     }
 }

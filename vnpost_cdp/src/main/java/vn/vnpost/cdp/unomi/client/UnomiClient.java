@@ -8,6 +8,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.common.exception.BusinessException;
+import vn.vnpost.cdp.unomi.dto.UnomiEventItem;
 import vn.vnpost.cdp.unomi.dto.UnomiEventRequest;
 import vn.vnpost.cdp.unomi.dto.UnomiProfileRequest;
 
@@ -79,9 +80,24 @@ public class UnomiClient {
     public Mono<Object> sendEvent(UnomiEventRequest request) {
         log.info("UnomiClient - sendEvent: eventType={}, profileId={}",
                 request.getEventType(), request.getProfileId());
+
+        UnomiEventItem eventItem = UnomiEventItem.builder()
+                .eventType(request.getEventType())
+                .scope(request.getScope())
+                .profileId(request.getProfileId())
+                .source(request.getSource())
+                .target(request.getTarget())
+                .properties(request.getProperties())
+                .build();
+
+        vn.vnpost.cdp.unomi.dto.UnomiEventCollectorPayload payload = vn.vnpost.cdp.unomi.dto.UnomiEventCollectorPayload.builder()
+                .sessionId(request.getSessionId())
+                .events(java.util.List.of(eventItem))
+                .build();
+
         return unomiWebClient.post()
                 .uri("/cxs/eventcollector")
-                .bodyValue(request)
+                .bodyValue(payload)
                 .retrieve()
                 .bodyToMono(Object.class)
                 .doOnSuccess(res -> log.info("UnomiClient - sendEvent success: eventType={}, profileId={}",
