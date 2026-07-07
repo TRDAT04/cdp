@@ -18,18 +18,13 @@ public class CustomerEventConsumer {
         this.customerEventService = customerEventService;
     }
 
-    @KafkaListener(
-            topics = "${app.kafka.topic.customer-event:cdp.customer.events}",
-            groupId = "${spring.kafka.consumer.group-id:vnpost-cdp-group}",
-            containerFactory = "customerEventKafkaListenerContainerFactory"
-    )
+    @KafkaListener(topics = "${app.kafka.topic.customer-event:cdp.customer.events}", groupId = "${spring.kafka.consumer.group-id:vnpost-cdp-group}", containerFactory = "customerEventKafkaListenerContainerFactory")
+
     public void consume(ConsumerRecord<String, CustomerEventMessage> record,
-                        Acknowledgment acknowledgment) {
-
+            Acknowledgment acknowledgment) {
         CustomerEventMessage message = record.value();
-
         log.info("CustomerEventConsumer - received: topic={}, partition={}, offset={}, " +
-                        "messageId={}, sourceSystem={}, sourceCustomerId={}, eventType={}",
+                "messageId={}, sourceSystem={}, sourceCustomerId={}, eventType={}",
                 record.topic(),
                 record.partition(),
                 record.offset(),
@@ -37,18 +32,14 @@ public class CustomerEventConsumer {
                 message != null ? message.getSourceSystem() : "null",
                 message != null ? message.getSourceCustomerId() : "null",
                 message != null ? message.getEventType() : "null");
-
         try {
             if (message == null) {
                 log.warn("CustomerEventConsumer - null message at offset={}, skipping", record.offset());
                 acknowledgment.acknowledge();
                 return;
             }
-
             customerEventService.process(message);
-
             acknowledgment.acknowledge();
-
             log.info("CustomerEventConsumer - processed and acknowledged: messageId={}",
                     message.getMessageId());
 
@@ -57,8 +48,6 @@ public class CustomerEventConsumer {
                     record.offset(),
                     message != null ? message.getMessageId() : "null",
                     ex);
-
-            // Giống Profile, tạm thời vẫn ack để tránh retry vô hạn trong giai đoạn phát triển
             acknowledgment.acknowledge();
         }
     }

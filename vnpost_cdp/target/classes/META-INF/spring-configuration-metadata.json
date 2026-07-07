@@ -48,6 +48,11 @@
       "sourceType": "vn.vnpost.cdp.config.UnomiProperties"
     },
     {
+      "name": "app.unomi.scope",
+      "type": "java.lang.String",
+      "sourceType": "vn.vnpost.cdp.config.UnomiProperties"
+    },
+    {
       "name": "app.unomi.username",
       "type": "java.lang.String",
       "sourceType": "vn.vnpost.cdp.config.UnomiProperties"

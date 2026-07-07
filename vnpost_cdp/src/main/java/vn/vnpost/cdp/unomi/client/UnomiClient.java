@@ -1,5 +1,7 @@
 package vn.vnpost.cdp.unomi.client;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
@@ -8,6 +10,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.common.exception.BusinessException;
+import vn.vnpost.cdp.unomi.dto.UnomiEventCollectorPayload;
 import vn.vnpost.cdp.unomi.dto.UnomiEventItem;
 import vn.vnpost.cdp.unomi.dto.UnomiEventRequest;
 import vn.vnpost.cdp.unomi.dto.UnomiProfileRequest;
@@ -84,17 +87,22 @@ public class UnomiClient {
         UnomiEventItem eventItem = UnomiEventItem.builder()
                 .eventType(request.getEventType())
                 .scope(request.getScope())
-                .profileId(request.getProfileId())
                 .source(request.getSource())
                 .target(request.getTarget())
                 .properties(request.getProperties())
                 .build();
 
-        vn.vnpost.cdp.unomi.dto.UnomiEventCollectorPayload payload = vn.vnpost.cdp.unomi.dto.UnomiEventCollectorPayload.builder()
+        UnomiEventCollectorPayload payload = UnomiEventCollectorPayload.builder()
                 .sessionId(request.getSessionId())
+                .profileId(request.getProfileId())
                 .events(java.util.List.of(eventItem))
                 .build();
-
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            log.info("Payload = {}", mapper.writeValueAsString(payload));
+        } catch (JsonProcessingException e) {
+            log.warn("Cannot serialize payload", e);
+        }
         return unomiWebClient.post()
                 .uri("/cxs/eventcollector")
                 .bodyValue(payload)

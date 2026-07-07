@@ -26,10 +26,10 @@ public class CustomerEvent extends BaseEntity {
     @Column(name = "event_code", nullable = false, unique = true, length = 100)
     private String eventCode;
 
-    @Column(name = "master_profile_id", nullable = false)
+    @Column(name = "master_profile_id")
     private Long masterProfileId;
 
-    @Column(name = "profile_code", nullable = false, length = 100)
+    @Column(name = "profile_code", length = 100)
     private String profileCode;
 
     @Column(name = "event_type", nullable = false, length = 100)

@@ -8,6 +8,9 @@ import vn.vnpost.cdp.unomi.client.UnomiClient;
 import vn.vnpost.cdp.unomi.dto.UnomiEventRequest;
 import vn.vnpost.cdp.unomi.dto.UnomiProfileRequest;
 
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -40,7 +43,14 @@ public class UnomiServiceImpl implements UnomiService {
         properties.put("provinceName", profile.getProvinceName());
         properties.put("unitCode", profile.getUnitCode());
         properties.put("unitName", profile.getUnitName());
-
+        properties.put(
+                "createdAt",
+                profile.getCreated()
+                        .atZone(ZoneOffset.UTC)
+                        .toInstant()
+                        .truncatedTo(ChronoUnit.MILLIS)
+                        .toString()
+        );
         UnomiProfileRequest request = UnomiProfileRequest.builder()
                 .itemId(profile.getProfileCode())
                 .itemType("profile")

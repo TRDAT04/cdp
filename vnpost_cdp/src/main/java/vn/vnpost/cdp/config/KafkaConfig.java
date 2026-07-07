@@ -65,15 +65,14 @@ public class KafkaConfig {
     }
 
     @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, ProfileIngestionMessage>
-            profileIngestionKafkaListenerContainerFactory() {
-        ConcurrentKafkaListenerContainerFactory<String, ProfileIngestionMessage> factory =
-                new ConcurrentKafkaListenerContainerFactory<>();
+    public ConcurrentKafkaListenerContainerFactory<String, ProfileIngestionMessage> profileIngestionKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, ProfileIngestionMessage> factory = new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(profileIngestionConsumerFactory());
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
         return factory;
     }
-/// ////////////////////////
+
+//   Customer Event//
     @Bean
     public ProducerFactory<String, CustomerEventMessage> customerEventProducerFactory() {
         Map<String, Object> props = new HashMap<>();
@@ -88,6 +87,7 @@ public class KafkaConfig {
     public KafkaTemplate<String, CustomerEventMessage> customerEventKafkaTemplate() {
         return new KafkaTemplate<>(customerEventProducerFactory());
     }
+
     @Bean
     public ConsumerFactory<String, CustomerEventMessage> customerEventConsumerFactory() {
         Map<String, Object> props = new HashMap<>();
@@ -104,16 +104,13 @@ public class KafkaConfig {
         return new DefaultKafkaConsumerFactory<>(
                 props,
                 new StringDeserializer(),
-                new JsonDeserializer<>(CustomerEventMessage.class, false)
-        );
+                new JsonDeserializer<>(CustomerEventMessage.class, false));
     }
 
     @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, CustomerEventMessage>
-    customerEventKafkaListenerContainerFactory() {
+    public ConcurrentKafkaListenerContainerFactory<String, CustomerEventMessage> customerEventKafkaListenerContainerFactory() {
 
-        ConcurrentKafkaListenerContainerFactory<String, CustomerEventMessage> factory =
-                new ConcurrentKafkaListenerContainerFactory<>();
+        ConcurrentKafkaListenerContainerFactory<String, CustomerEventMessage> factory = new ConcurrentKafkaListenerContainerFactory<>();
 
         factory.setConsumerFactory(customerEventConsumerFactory());
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);

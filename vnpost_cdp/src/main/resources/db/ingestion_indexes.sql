@@ -82,3 +82,21 @@ CREATE INDEX IF NOT EXISTS idx_pusl_failed          ON profile_unomi_sync_logs(s
 CREATE INDEX IF NOT EXISTS idx_pusl_profile_type    ON profile_unomi_sync_logs(master_profile_id, sync_type);
 -- Composite: profile code for Unomi-side lookups
 CREATE INDEX IF NOT EXISTS idx_pusl_code_status     ON profile_unomi_sync_logs(profile_code, status);
+
+-- ============================================================
+-- customer_events — event search & Customer 360 timeline
+-- ============================================================
+-- Primary lookup: event tra cứu theo profile (Customer 360 timeline view)
+CREATE INDEX IF NOT EXISTS idx_ce_profile_time       ON customer_events(master_profile_id, occurred_at DESC);
+-- Filter: theo loại event
+CREATE INDEX IF NOT EXISTS idx_ce_event_type         ON customer_events(event_type);
+-- Filter: theo hệ thống nguồn
+CREATE INDEX IF NOT EXISTS idx_ce_source_system      ON customer_events(source_system);
+-- Filter: theo session
+CREATE INDEX IF NOT EXISTS idx_ce_session_id         ON customer_events(session_id) WHERE session_id IS NOT NULL;
+-- Filter: theo khoảng thời gian
+CREATE INDEX IF NOT EXISTS idx_ce_occurred_at        ON customer_events(occurred_at DESC);
+-- Unique event code lookup (tra cứu chi tiết 1 event)
+CREATE INDEX IF NOT EXISTS idx_ce_event_code         ON customer_events(event_code);
+-- Retry job: lấy các event PENDING hoặc FAILED chưa sync Unomi
+CREATE INDEX IF NOT EXISTS idx_ce_sync_status        ON customer_events(sync_status) WHERE sync_status IN (0, 2);

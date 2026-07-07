@@ -16,7 +16,6 @@ import java.util.Map;
 public class UnomiEventItem {
     private String eventType;
     private String scope;
-    private String profileId;
     private Map<String, Object> source;
     private Map<String, Object> target;
     private Map<String, Object> properties;

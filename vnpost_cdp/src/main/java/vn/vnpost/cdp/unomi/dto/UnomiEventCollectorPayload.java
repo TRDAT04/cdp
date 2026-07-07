@@ -15,5 +15,6 @@ import java.util.List;
 @AllArgsConstructor
 public class UnomiEventCollectorPayload {
     private String sessionId;
+    private String profileId;
     private List<UnomiEventItem> events;
 }
