@@ -10,10 +10,10 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.common.exception.BusinessException;
-import vn.vnpost.cdp.unomi.dto.UnomiEventCollectorPayload;
-import vn.vnpost.cdp.unomi.dto.UnomiEventItem;
-import vn.vnpost.cdp.unomi.dto.UnomiEventRequest;
-import vn.vnpost.cdp.unomi.dto.UnomiProfileRequest;
+import vn.vnpost.cdp.unomi.dto.*;
+
+import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Component
@@ -149,5 +149,44 @@ public class UnomiClient {
                             "UNOMI_COMMUNICATION_ERROR",
                             "Failed to communicate with Unomi: " + ex.getMessage()));
                 });
+    }
+
+    public Mono<List<UnomiSegmentResponse>> getSegments() {
+
+        return unomiWebClient
+                .get()
+                .uri("/cxs/segments")
+                .retrieve()
+                .bodyToFlux(UnomiSegmentResponse.class)
+                .collectList();
+    }
+    public Mono<UnomiSegmentDetailResponse> getSegmentDetail(String segmentId) {
+
+        return unomiWebClient
+                .get()
+                .uri("/cxs/segments/{segmentId}", segmentId)
+                .retrieve()
+                .bodyToMono(UnomiSegmentDetailResponse.class);
+    }
+    public Mono<Object> getSegmentMembers(String segmentId) {
+
+        var request = Map.of(
+                "condition", Map.of(
+                        "type", "profilePropertyCondition",
+                        "parameterValues", Map.of(
+                                "propertyName", "segments",
+                                "comparisonOperator", "equals",
+                                "propertyValue", segmentId
+                        )
+                ),
+                "offset", 0,
+                "limit", 20
+        );
+
+        return unomiWebClient.post()
+                .uri("/cxs/profiles/search")
+                .bodyValue(request)
+                .retrieve()
+                .bodyToMono(Object.class);
     }
 }

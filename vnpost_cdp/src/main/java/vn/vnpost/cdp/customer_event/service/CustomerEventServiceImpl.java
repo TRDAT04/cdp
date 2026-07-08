@@ -3,6 +3,8 @@ package vn.vnpost.cdp.customer_event.service;
 import jakarta.persistence.criteria.Predicate;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Map;
 
@@ -146,9 +148,21 @@ public class CustomerEventServiceImpl implements CustomerEventService {
             log.error("CustomerEventService - syncToUnomi: eventId={} not found, skipping", eventId);
             return;
         }
-
         if (event.getSyncStatus() == SYNC_UNMATCHED) {
             return;
+        }
+
+        Map<String, Object> properties = event.getProperties();
+
+        if ("createOrder".equals(event.getEventType())) {
+            properties.put(
+                    "transactionDate",
+                    event.getOccurredAt()
+                            .atZone(ZoneOffset.UTC)
+                            .toInstant()
+                            .truncatedTo(ChronoUnit.MILLIS)
+                            .toString()
+            );
         }
 
         UnomiEventRequest request = UnomiEventRequest.builder()

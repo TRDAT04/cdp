@@ -17,8 +17,6 @@ import java.util.Map;
 @Component
 public class UnomiRuleBuilder {
 
-
-
     public Map<String, Object> build(RuleConfig config) {
         Map<String, Object> rule = new LinkedHashMap<>();
 
