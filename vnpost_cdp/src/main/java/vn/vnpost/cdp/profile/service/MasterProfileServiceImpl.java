@@ -9,6 +9,8 @@ import vn.vnpost.cdp.profile.dto.MasterProfileResponse;
 import vn.vnpost.cdp.profile.dto.MasterProfileUpdateRequest;
 import vn.vnpost.cdp.profile.entity.MasterProfile;
 import vn.vnpost.cdp.profile.repository.MasterProfileRepository;
+import vn.vnpost.cdp.unomi.dto.UnomiProfileResponse;
+import vn.vnpost.cdp.unomi.dto.UnomiProfileSearchResponse;
 import vn.vnpost.cdp.unomi.service.UnomiService;
 
 import java.time.LocalDateTime;
@@ -25,6 +27,20 @@ public class MasterProfileServiceImpl implements MasterProfileService {
                                     UnomiService unomiService) {
         this.masterProfileRepository = masterProfileRepository;
         this.unomiService = unomiService;
+
+    }
+    @Override
+    public UnomiProfileSearchResponse getProfilesFromUnomi(Integer page,
+                                                           Integer size) {
+        int offset = page * size;
+        return unomiService.getProfiles(offset, size)
+                .block();
+    }
+    @Override
+    public UnomiProfileResponse getProfileByItemId(String itemId) {
+
+        return unomiService.getProfileByItemId(itemId)
+                .block();
     }
 
     @Override

@@ -12,6 +12,7 @@ import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.common.exception.BusinessException;
 import vn.vnpost.cdp.unomi.dto.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -25,33 +26,33 @@ public class UnomiClient {
         this.unomiWebClient = unomiWebClient;
     }
 
-    public Mono<Object> getProfile(String profileId) {
-        log.info("UnomiClient - getProfile: profileId={}", profileId);
-        return unomiWebClient.get()
-                .uri("/cxs/profiles/{profileId}", profileId)
+
+    public Mono<UnomiProfileSearchResponse> searchProfiles(int offset, int limit) {
+
+        Map<String, Object> body = new HashMap<>();
+
+        body.put("condition", Map.of(
+                "type", "matchAllCondition"
+        ));
+        body.put("offset", offset);
+        body.put("limit", limit);
+
+        return unomiWebClient
+                .post()
+                .uri("/cxs/profiles/search")
+                .bodyValue(body)
                 .retrieve()
-                .bodyToMono(Object.class)
-                .doOnSuccess(res -> log.info("UnomiClient - getProfile success: profileId={}", profileId))
-                .onErrorResume(WebClientResponseException.class, ex -> {
-                    log.error("UnomiClient - getProfile error: profileId={}, status={}, body={}",
-                            profileId, ex.getStatusCode(), ex.getResponseBodyAsString());
-                    if (ex.getStatusCode() == HttpStatus.NOT_FOUND) {
-                        return Mono.error(new BusinessException(
-                                "PROFILE_NOT_FOUND_IN_UNOMI",
-                                "Profile not found in Unomi: " + profileId));
-                    }
-                    return Mono.error(new BusinessException(
-                            "UNOMI_ERROR",
-                            "Unomi API error [" + ex.getStatusCode() + "]: " + ex.getResponseBodyAsString()));
-                })
-                .onErrorResume(BusinessException.class, Mono::error)
-                .onErrorResume(Exception.class, ex -> {
-                    log.error("UnomiClient - getProfile unexpected error: profileId={}", profileId, ex);
-                    return Mono.error(new BusinessException(
-                            "UNOMI_COMMUNICATION_ERROR",
-                            "Failed to communicate with Unomi: " + ex.getMessage()));
-                });
+                .bodyToMono(UnomiProfileSearchResponse.class);
     }
+
+    public Mono<UnomiProfileResponse> getProfileByItemId(String itemId) {
+
+        return unomiWebClient.get()
+                .uri("/cxs/profiles/{itemId}", itemId)
+                .retrieve()
+                .bodyToMono(UnomiProfileResponse.class);
+    }
+
 
     public Mono<Object> createOrUpdateProfile(UnomiProfileRequest request) {
         log.info("UnomiClient - createOrUpdateProfile: itemId={}, itemType={}",

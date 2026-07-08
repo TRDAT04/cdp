@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.common.response.MethodResult;
 import vn.vnpost.cdp.profile.dto.MasterProfileCreateRequest;
 import vn.vnpost.cdp.profile.dto.MasterProfileResponse;
@@ -26,6 +27,7 @@ import vn.vnpost.cdp.profile.dto.query.ProfileListItemResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileSearchRequest;
 import vn.vnpost.cdp.profile.service.MasterProfileService;
 import vn.vnpost.cdp.profile.service.ProfileQueryService;
+import vn.vnpost.cdp.unomi.dto.UnomiProfileSearchResponse;
 
 import java.time.LocalDate;
 
@@ -43,6 +45,27 @@ public class MasterProfileController {
         this.profileQueryService = profileQueryService;
     }
 
+    @GetMapping("/unomi")
+    public ResponseEntity<MethodResult> getProfilesFromUnomi(
+            @RequestParam(defaultValue = "0") Integer page,
+            @RequestParam(defaultValue = "10") Integer size) {
+
+        return ResponseEntity.ok(
+                MethodResult.success(
+                        masterProfileService.getProfilesFromUnomi(page, size)
+                )
+        );
+    }
+    @GetMapping("/unomi/{itemId}")
+    public ResponseEntity<MethodResult> getProfileFromUnomi(
+            @PathVariable String itemId) {
+
+        return ResponseEntity.ok(
+                MethodResult.success(
+                        masterProfileService.getProfileByItemId(itemId)
+                )
+        );
+    }
     @PostMapping
     public ResponseEntity<MethodResult> create(
             @Valid @RequestBody MasterProfileCreateRequest request) {
