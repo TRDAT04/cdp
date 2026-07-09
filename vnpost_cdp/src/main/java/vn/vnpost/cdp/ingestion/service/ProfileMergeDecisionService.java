@@ -1,14 +1,20 @@
 package vn.vnpost.cdp.ingestion.service;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import vn.vnpost.cdp.ingestion.dto.NormalizedProfileData;
 import vn.vnpost.cdp.ingestion.enums.MergeDecision;
 import vn.vnpost.cdp.ingestion.enums.ProfileSourceSystemCode;
+import vn.vnpost.cdp.profile.dto.match.ProfileMatchReasonCreateItem;
 import vn.vnpost.cdp.profile.entity.MasterProfile;
 import vn.vnpost.cdp.profile.repository.ProfileIdentityLinkRepository;
+import vn.vnpost.cdp.profile.service.match.ProfileMatchScoreService;
+import vn.vnpost.cdp.profile.dto.match.ProfileMatchScoreResult;
+import vn.vnpost.cdp.common.utils.IdentityUtils;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -19,20 +25,24 @@ import java.util.List;
  *   MEDIUM — MYVNPOST, PORTAL
  *   LOW    — CMS, WEBSITE
  *
- * Key rule: phone / email match alone is NOT sufficient for AUTO_MERGE unless the
- * source is CRM and there are no conflicting identity fields.  Medium/low-trust
- * sources (CMS, PORTAL, MYVNPOST) must go through NEED_REVIEW or
- * CREATE_MATCH_CANDIDATE even when a phone or email matches.
+ * Decision flow (single candidate):
+ *  1. alreadyLinked (same sourceSystem+sourceCustomerId, status=1) → AUTO_MERGE
+ *  2. Deterministic checks on identity fields:
+ *     - identityNo conflict                → NEED_REVIEW
+ *     - identityNo exact match             → AUTO_MERGE
+ *  3. Ambiguous (no Identity No conflict/match) — delegate to Score:
+ *     - identityConflict detected by scorer → NEED_REVIEW
+ *     - Score >= 95 && !identityConflict    → AUTO_MERGE
+ *     - Score >= 70                         → CREATE_MATCH_CANDIDATE
+ *     - Score < 70                          → CREATE_NEW_PROFILE
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class ProfileMergeDecisionService {
 
     private final ProfileIdentityLinkRepository identityLinkRepository;
-
-    public ProfileMergeDecisionService(ProfileIdentityLinkRepository identityLinkRepository) {
-        this.identityLinkRepository = identityLinkRepository;
-    }
+    private final ProfileMatchScoreService scoreService;
 
     public MergeDecision decide(NormalizedProfileData data, List<MasterProfile> candidates) {
         String sourceSystem = data.getSourceSystem();
@@ -64,7 +74,7 @@ public class ProfileMergeDecisionService {
 
         MasterProfile candidate = candidates.get(0);
 
-        // Only ACTIVE links (status=1) qualify for auto-merge
+        // ── Fast-path 1: Already linked (same source+customer → known identity) ──
         boolean alreadyLinked = identityLinkRepository
                 .findBySourceSystemAndSourceCustomerIdAndStatus(sourceSystem, data.getSourceCustomerId(), (short) 1)
                 .map(link -> link.getMasterProfileId().equals(candidate.getId()))
@@ -75,87 +85,61 @@ public class ProfileMergeDecisionService {
             return MergeDecision.AUTO_MERGE;
         }
 
-        String incomingIdentityNo = normalizeText(data.getIdentityNo());
-        String candidateIdentityNo = normalizeText(candidate.getIdentityNo());
+        // ── Normalize identity fields for deterministic comparison ──
+        String incomingIdNo   = IdentityUtils.normalizeText(data.getIdentityNo());
+        String candidateIdNo  = IdentityUtils.normalizeText(candidate.getIdentityNo());
+        String incomingPhone  = IdentityUtils.normalizePhone(data.getPhone());
+        String candidatePhone = IdentityUtils.normalizePhone(candidate.getPhone());
+        String incomingEmail  = IdentityUtils.normalizeEmail(data.getEmail());
+        String candidateEmail = IdentityUtils.normalizeEmail(candidate.getEmail());
 
-        String incomingPhone = normalizePhone(data.getPhone());
-        String candidatePhone = normalizePhone(candidate.getPhone());
+        boolean identityNoMatch    = hasText(incomingIdNo)  && hasText(candidateIdNo)  && incomingIdNo.equals(candidateIdNo);
+        boolean identityNoConflict = hasText(incomingIdNo)  && hasText(candidateIdNo)  && !incomingIdNo.equals(candidateIdNo);
 
-        String incomingEmail = normalizeEmail(data.getEmail());
-        String candidateEmail = normalizeEmail(candidate.getEmail());
-
-        boolean identityNoMatch = StringUtils.hasText(incomingIdentityNo)
-                && StringUtils.hasText(candidateIdentityNo)
-                && incomingIdentityNo.equals(candidateIdentityNo);
-
-        boolean phoneMatch = StringUtils.hasText(incomingPhone)
-                && StringUtils.hasText(candidatePhone)
-                && incomingPhone.equals(candidatePhone);
-
-        boolean emailMatch = StringUtils.hasText(incomingEmail)
-                && StringUtils.hasText(candidateEmail)
-                && incomingEmail.equals(candidateEmail);
-
-        boolean identityNoConflict = StringUtils.hasText(incomingIdentityNo)
-                && StringUtils.hasText(candidateIdentityNo)
-                && !incomingIdentityNo.equals(candidateIdentityNo);
-
-        boolean phoneConflict = StringUtils.hasText(incomingPhone)
-                && StringUtils.hasText(candidatePhone)
-                && !incomingPhone.equals(candidatePhone);
-
-        boolean emailConflict = StringUtils.hasText(incomingEmail)
-                && StringUtils.hasText(candidateEmail)
-                && !incomingEmail.equals(candidateEmail);
-
-
+        // ── Fast-path 2: Deterministic identity checks ──
         if (identityNoConflict) {
+            log.info("ProfileMergeDecisionService - identityNo conflict → NEED_REVIEW");
             return MergeDecision.NEED_REVIEW;
         }
         if (identityNoMatch) {
+            log.info("ProfileMergeDecisionService - identityNo exact match → AUTO_MERGE");
             return MergeDecision.AUTO_MERGE;
         }
 
-        if (phoneMatch && !emailConflict) {
-            return MergeDecision.AUTO_MERGE;
-        }
+        // ── Score-based path: ambiguous case (no direct match OR conflict found) ──
+        ProfileMatchScoreResult scoreResult = scoreService.calculate(data, candidate);
+        BigDecimal score = scoreResult.getScore();
 
-        if (emailMatch && !phoneConflict) {
-            return MergeDecision.AUTO_MERGE;
-        }
-        if (phoneConflict || emailConflict) {
+        log.info("ProfileMergeDecisionService - ambiguous → Score profileId={}, score={}, level={}, conflict={}, reasons={}",
+                candidate.getId(),
+                score,
+                scoreResult.getMatchLevel(),
+                scoreResult.isIdentityConflict(),
+                scoreResult.getReasons().stream()
+                        .map(ProfileMatchReasonCreateItem::getReasonType)
+                        .toList()
+        );
+
+        if (scoreResult.isIdentityConflict()) {
+            log.info("ProfileMergeDecisionService - scorer detected identity conflict → NEED_REVIEW: score={}", score);
             return MergeDecision.NEED_REVIEW;
         }
 
-        log.info("No strong match found -> CREATE_MATCH_CANDIDATE");
-        return MergeDecision.NEED_REVIEW;
+        if (scoreResult.isAutoMergeRecommended()) {
+            log.info("ProfileMergeDecisionService - score >= 95 and no conflict → AUTO_MERGE: score={}", score);
+            return MergeDecision.AUTO_MERGE;
+        }
+
+        if (score.compareTo(BigDecimal.valueOf(70)) >= 0) {
+            log.info("ProfileMergeDecisionService - score >= 70 → CREATE_MATCH_CANDIDATE: score={}", score);
+            return MergeDecision.CREATE_MATCH_CANDIDATE;
+        }
+
+        log.info("ProfileMergeDecisionService - score < 70, no identity overlap → CREATE_NEW_PROFILE: score={}", score);
+        return MergeDecision.CREATE_NEW_PROFILE;
     }
 
-    private String normalizeText(String value) {
-        if (!StringUtils.hasText(value)) {
-            return null;
-        }
-        return value.trim();
-    }
-
-    private String normalizeEmail(String email) {
-        if (!StringUtils.hasText(email)) {
-            return null;
-        }
-        return email.trim().toLowerCase();
-    }
-
-    private String normalizePhone(String phone) {
-        if (!StringUtils.hasText(phone)) {
-            return null;
-        }
-
-        String digits = phone.replaceAll("[^0-9]", "");
-
-        if (digits.startsWith("84") && digits.length() > 9) {
-            digits = "0" + digits.substring(2);
-        }
-
-        return digits;
+    private boolean hasText(String s) {
+        return StringUtils.hasText(s);
     }
 }

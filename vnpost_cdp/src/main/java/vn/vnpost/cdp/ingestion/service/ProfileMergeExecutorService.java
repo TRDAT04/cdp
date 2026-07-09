@@ -1,17 +1,17 @@
 package vn.vnpost.cdp.ingestion.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.context.ApplicationEventPublisher;
+import vn.vnpost.cdp.common.utils.IdentityUtils;
 import vn.vnpost.cdp.ingestion.dto.NormalizedProfileData;
 import vn.vnpost.cdp.profile.entity.*;
+import vn.vnpost.cdp.profile.event.ProfileMergedEvent;
 import vn.vnpost.cdp.profile.repository.*;
 import vn.vnpost.cdp.profile.service.ProfileMergeEngineService;
-import vn.vnpost.cdp.profile.service.match.ProfileMatchCandidateService;
 import vn.vnpost.cdp.security.SecurityUtils;
-import vn.vnpost.cdp.unomi.service.UnomiService;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -36,11 +36,8 @@ public class ProfileMergeExecutorService {
     private final ProfileAttributeValueRepository attributeValueRepository;
     private final ProfileChangeLogRepository changeLogRepository;
     private final ProfileMergeConflictRepository conflictRepository;
-    private final ProfileUnomiSyncLogRepository unomiSyncLogRepository;
-    private final UnomiService unomiService;
-    private final ObjectMapper objectMapper;
-    private final ProfileMatchCandidateService matchCandidateService;
     private final ProfileMergeEngineService profileMergeEngineService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public ProfileMergeExecutorService(
             MasterProfileRepository masterProfileRepository,
@@ -49,22 +46,16 @@ public class ProfileMergeExecutorService {
             ProfileAttributeValueRepository attributeValueRepository,
             ProfileChangeLogRepository changeLogRepository,
             ProfileMergeConflictRepository conflictRepository,
-            ProfileUnomiSyncLogRepository unomiSyncLogRepository,
-            UnomiService unomiService,
-            ObjectMapper objectMapper,
-            ProfileMatchCandidateService matchCandidateService,
-            ProfileMergeEngineService profileMergeEngineService) {
+            ProfileMergeEngineService profileMergeEngineService,
+            ApplicationEventPublisher eventPublisher) {
         this.masterProfileRepository = masterProfileRepository;
         this.sourceRecordRepository = sourceRecordRepository;
         this.identityLinkRepository = identityLinkRepository;
         this.attributeValueRepository = attributeValueRepository;
         this.changeLogRepository = changeLogRepository;
         this.conflictRepository = conflictRepository;
-        this.unomiSyncLogRepository = unomiSyncLogRepository;
-        this.unomiService = unomiService;
-        this.objectMapper = objectMapper;
-        this.matchCandidateService = matchCandidateService;
-        this.profileMergeEngineService=profileMergeEngineService;
+        this.profileMergeEngineService = profileMergeEngineService;
+        this.eventPublisher = eventPublisher;
     }
 
     // =====================================================================
@@ -121,16 +112,8 @@ public class ProfileMergeExecutorService {
         sourceRecord.setProcessedAt(LocalDateTime.now());
         sourceRecordRepository.save(sourceRecord);
 
-        // 8. Sync to Unomi and write log
-        syncToUnomi(profile, sourceRecord, "CREATE");
-
-        // 9. Trigger match candidate detection for newly created profile
-        try {
-            matchCandidateService.detectAndCreateCandidatesForProfile(profile.getId());
-        } catch (Exception ex) {
-            log.warn("ProfileMergeExecutorService - match candidate detection failed for profile {}: {}",
-                    profile.getId(), ex.getMessage());
-        }
+        // 8. Publish event for async processing (Unomi Sync & Match Candidate Detection)
+        eventPublisher.publishEvent(new ProfileMergedEvent(this, profile, "CREATE"));
 
         return profile;
     }
@@ -202,16 +185,8 @@ public class ProfileMergeExecutorService {
         sourceRecord.setProcessedAt(LocalDateTime.now());
         sourceRecordRepository.save(sourceRecord);
 
-        // 5. Sync to Unomi
-        syncToUnomi(targetProfile, sourceRecord, "UPDATE");
-
-        // 6. Trigger match candidate detection for updated profile
-        try {
-            matchCandidateService.detectAndCreateCandidatesForProfile(targetProfile.getId());
-        } catch (Exception ex) {
-            log.warn("ProfileMergeExecutorService - match candidate detection failed for profile {}: {}",
-                    targetProfile.getId(), ex.getMessage());
-        }
+        // 5. Publish event for async processing (Unomi Sync & Match Candidate Detection)
+        eventPublisher.publishEvent(new ProfileMergedEvent(this, targetProfile, "UPDATE"));
 
         return targetProfile;
     }
@@ -363,12 +338,12 @@ public class ProfileMergeExecutorService {
         // 3. Field-level conflicts — only phone, email, identityNo (NOT fullName)
         List<String> conflictingFields = new ArrayList<>();
 
-        String incomingPhone  = normalizePhone(data.getPhone());
-        String targetPhone    = normalizePhone(target.getPhone());
-        String incomingEmail  = normalizeEmail(data.getEmail());
-        String targetEmail    = normalizeEmail(target.getEmail());
-        String incomingIdNo   = normalizeText(data.getIdentityNo());
-        String targetIdNo     = normalizeText(target.getIdentityNo());
+        String incomingPhone  = IdentityUtils.normalizePhone(data.getPhone());
+        String targetPhone    = IdentityUtils.normalizePhone(target.getPhone());
+        String incomingEmail  = IdentityUtils.normalizeEmail(data.getEmail());
+        String targetEmail    = IdentityUtils.normalizeEmail(target.getEmail());
+        String incomingIdNo   = IdentityUtils.normalizeText(data.getIdentityNo());
+        String targetIdNo     = IdentityUtils.normalizeText(target.getIdentityNo());
 
         if (StringUtils.hasText(incomingPhone) && StringUtils.hasText(targetPhone)
                 && !incomingPhone.equals(targetPhone)) {
@@ -660,51 +635,6 @@ public class ProfileMergeExecutorService {
         }
     }
 
-    // Normalization helpers (same rules as ProfileMergeDecisionService)
-
-    private String normalizeText(String value) {
-        if (!StringUtils.hasText(value)) return null;
-        return value.trim();
-    }
-
-    private String normalizeEmail(String email) {
-        if (!StringUtils.hasText(email)) return null;
-        return email.trim().toLowerCase();
-    }
-
-    private String normalizePhone(String phone) {
-        if (!StringUtils.hasText(phone)) return null;
-        String digits = phone.replaceAll("[^0-9]", "");
-        if (digits.startsWith("84") && digits.length() > 9) {
-            digits = "0" + digits.substring(2);
-        }
-        return digits;
-    }
-
-    private void syncToUnomi(MasterProfile profile, ProfileSourceRecord sourceRecord, String syncType) {
-        ProfileUnomiSyncLog syncLog = new ProfileUnomiSyncLog();
-        syncLog.setMasterProfileId(profile.getId());
-        syncLog.setProfileCode(profile.getProfileCode());
-        syncLog.setSyncType(syncType);
-        syncLog.setCreatedBy(SecurityUtils.getCurrentUsername().orElse("system"));
-
-        try {
-            Object result = unomiService.syncProfileToUnomi(profile).block();
-            syncLog.setStatus((short) 1); // SUCCESS
-            syncLog.setResponsePayload(result != null ? objectMapper.convertValue(result, Map.class) : null);
-            syncLog.setSyncedAt(LocalDateTime.now());
-            profile.setSyncedToUnomiAt(LocalDateTime.now());
-            masterProfileRepository.save(profile);
-            log.info("ProfileMergeExecutorService - Unomi sync SUCCESS: profileCode={}", profile.getProfileCode());
-        } catch (Exception ex) {
-            syncLog.setStatus((short) 2); // FAILED
-            syncLog.setErrorMessage(ex.getMessage());
-            syncLog.setSyncedAt(LocalDateTime.now());
-            log.error("ProfileMergeExecutorService - Unomi sync FAILED: profileCode={}",
-                    profile.getProfileCode(), ex);
-        }
-        unomiSyncLogRepository.save(syncLog);
-    }
 
     // =====================================================================
     // CREATE PROFILE FOR REVIEW (used by CREATE_MATCH_CANDIDATE flow)

@@ -105,10 +105,7 @@ public class ProfileIngestionServiceImpl implements ProfileIngestionService {
                     mergeExecutorService.createFieldLevelNeedReview(sourceRecord, normalizedData, candidates.get(0));
                 }
                 case CREATE_MATCH_CANDIDATE -> {
-                    // PORTAL/MYVNPOST matched an existing profile by phone/email but identity is
-                    // ambiguous. Create a new master profile for the incoming source (no Unomi sync,
-                    // no MERGED status), then directly create a match candidate between the two
-                    // known profiles so an admin can confirm or reject the merge.
+
                     log.info("ProfileIngestionServiceImpl - CREATE_MATCH_CANDIDATE for messageId={}",
                             message.getMessageId());
                     MasterProfile existingProfile = candidates.get(0);

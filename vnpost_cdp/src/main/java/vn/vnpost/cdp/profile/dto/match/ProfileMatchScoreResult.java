@@ -14,7 +14,7 @@ public class ProfileMatchScoreResult {
 
     private BigDecimal score;
     private String matchLevel;
-    private Boolean autoMergeRecommended;
-    private Boolean identityConflict;
+    private boolean autoMergeRecommended;
+    private boolean identityConflict;
     private List<ProfileMatchReasonCreateItem> reasons;
 }
