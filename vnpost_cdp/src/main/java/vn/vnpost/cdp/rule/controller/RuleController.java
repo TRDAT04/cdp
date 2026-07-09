@@ -1,20 +1,18 @@
 package vn.vnpost.cdp.rule.controller;
 
-
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
-import vn.vnpost.cdp.rule.config.RuleConfig;
-import vn.vnpost.cdp.rule.dto.DeployResult;
-import vn.vnpost.cdp.rule.dto.RuleDetailResponse;
-import vn.vnpost.cdp.rule.dto.RuleResponse;
-import vn.vnpost.cdp.rule.dto.ValidationResult;
+import vn.vnpost.cdp.common.response.MethodResult;
+import vn.vnpost.cdp.rule.dto.RuleRequest;
 import vn.vnpost.cdp.rule.service.RuleEngineService;
 
 import java.util.List;
-import java.util.Map;
 
 @Validated
 @RequiredArgsConstructor
@@ -25,38 +23,34 @@ public class RuleController {
     private final RuleEngineService ruleEngineService;
 
     @GetMapping
-    public ResponseEntity<List<RuleResponse>> getAllRules() {
-        return ResponseEntity.ok(ruleEngineService.getAllRules());
+    public ResponseEntity<MethodResult> getAllRules(
+            @PageableDefault(sort = "deployedAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return ResponseEntity.ok(MethodResult.success(ruleEngineService.getAllRuleLogs(pageable)));
     }
-
 
     @GetMapping("/{ruleId}")
-    public ResponseEntity<RuleDetailResponse> getRuleDetail(
-            @PathVariable String ruleId) {
+    public ResponseEntity<MethodResult> getRuleDetail(@PathVariable String ruleId) {
+        return ResponseEntity.ok(MethodResult.success(ruleEngineService.getRuleLogsByRuleId(ruleId)));
+    }
 
-        return ResponseEntity.ok(
-                ruleEngineService.getRuleDetail(ruleId)
-        );
-    }
     @PostMapping("/validate")
-    public ResponseEntity<ValidationResult> validate(@Valid @RequestBody RuleConfig config) {
-        ValidationResult result = ruleEngineService.validate(config);
-        if (result.isValid()) {
-            return ResponseEntity.ok(result);
-        } else {
-            return ResponseEntity.badRequest().body(result);
+    public ResponseEntity<MethodResult> validate(@Valid @RequestBody RuleRequest request) {
+        List<String> violations = ruleEngineService.validate(request);
+        if (violations.isEmpty()) {
+            return ResponseEntity.ok(MethodResult.success("Rule configuration is valid."));
         }
+        return ResponseEntity.badRequest()
+                .body(MethodResult.error("Validation failed: " + String.join("; ", violations)));
     }
+
 
     @PostMapping("/build")
-    public ResponseEntity<Map<String, Object>> buildRule(@Valid @RequestBody RuleConfig config) {
-        Map<String, Object> rulePayload = ruleEngineService.buildRule(config);
-        return ResponseEntity.ok(rulePayload);
+    public ResponseEntity<MethodResult> buildRule(@Valid @RequestBody RuleRequest request) {
+        return ResponseEntity.ok(MethodResult.success(ruleEngineService.buildRule(request)));
     }
 
     @PostMapping("/deploy")
-    public ResponseEntity<DeployResult> deployRule(@Valid @RequestBody RuleConfig config) {
-        DeployResult result = ruleEngineService.deployRule(config);
-        return ResponseEntity.ok(result);
+    public ResponseEntity<MethodResult> deployRule(@Valid @RequestBody RuleRequest request) {
+        return ResponseEntity.ok(MethodResult.success(ruleEngineService.deployRule(request)));
     }
 }

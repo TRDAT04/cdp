@@ -8,6 +8,8 @@ import vn.vnpost.cdp.profile.entity.ProfileMergeRule;
 import vn.vnpost.cdp.profile.repository.ProfileAttributeValueRepository;
 import vn.vnpost.cdp.profile.repository.ProfileMergeRuleRepository;
 
+import java.time.LocalDateTime;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -17,7 +19,7 @@ public class ProfileMergeEngineServiceImpl implements ProfileMergeEngineService 
     private final ProfileAttributeValueRepository attributeRepository;
 
     @Override
-    public boolean shouldOverwrite(Long masterProfileId, String propertyName, String incomingSource) {
+    public boolean shouldOverwrite(Long masterProfileId, String propertyName, String incomingSource, LocalDateTime incomingReceivedAt) {
         log.info("MergeEngine - evaluating overwrite: masterProfileId={}, property={}, incomingSource={}",
                 masterProfileId, propertyName, incomingSource);
 
@@ -77,9 +79,23 @@ public class ProfileMergeEngineServiceImpl implements ProfileMergeEngineService 
                     return false;
 
                 case "LATEST_UPDATE":
-                    // bạn chưa có timestamp trong selected -> tạm fallback priority
-                    log.info("MergeEngine - LATEST_UPDATE -> fallback to priority");
-                    break;
+                    LocalDateTime currentReceivedAt = selected.getReceivedAt();
+                    if (currentReceivedAt == null) {
+                        log.info("MergeEngine - current receivedAt is null -> allow overwrite");
+                        return true;
+                    }
+                    if (incomingReceivedAt == null) {
+                        log.info("MergeEngine - incoming receivedAt is null -> deny overwrite");
+                        return false;
+                    }
+                    boolean latestResult = incomingReceivedAt.isAfter(currentReceivedAt);
+                    log.info(
+                            "MergeEngine - LATEST_UPDATE decision={}, current={}, incoming={}",
+                            latestResult,
+                            currentReceivedAt,
+                            incomingReceivedAt
+                    );
+                    return latestResult;
 
                 case "SOURCE_PRIORITY":
                     Integer currentPriority = currentRule.getPriority();
@@ -92,12 +108,6 @@ public class ProfileMergeEngineServiceImpl implements ProfileMergeEngineService 
                     }
                     break;
 
-                case "APPEND_LIST":
-                case "SUM":
-                case "MAX":
-                case "MIN":
-                    log.info("MergeEngine - non-overwrite strategy -> block overwrite");
-                    return false;
             }
         }
 

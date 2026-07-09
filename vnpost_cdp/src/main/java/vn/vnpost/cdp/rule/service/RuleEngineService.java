@@ -1,28 +1,25 @@
 package vn.vnpost.cdp.rule.service;
 
-
-
-import vn.vnpost.cdp.rule.config.RuleConfig;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import vn.vnpost.cdp.rule.dto.DeployResult;
-import vn.vnpost.cdp.rule.dto.RuleDetailResponse;
-import vn.vnpost.cdp.rule.dto.RuleResponse;
-import vn.vnpost.cdp.rule.dto.ValidationResult;
+import vn.vnpost.cdp.rule.dto.RuleDeployLogResponse;
+import vn.vnpost.cdp.rule.dto.RuleRequest;
+import vn.vnpost.cdp.rule.entity.RuleDeployLog;
 
 import java.util.List;
 import java.util.Map;
 
-/**
- * Service for managing Unomi rules via configuration.
- */
+
 public interface RuleEngineService {
 
-    ValidationResult validate(RuleConfig config);
+    List<String> validate(RuleRequest request);
 
-    Map<String, Object> buildRule(RuleConfig config);
+    Map<String, Object> buildRule(RuleRequest request);
 
-    DeployResult deployRule(RuleConfig config);
+    DeployResult deployRule(RuleRequest request);
 
-    List<RuleResponse> getAllRules();
+    Page<RuleDeployLogResponse> getAllRuleLogs(Pageable pageable);
 
-    RuleDetailResponse getRuleDetail(String ruleId);
+    List<RuleDeployLogResponse> getRuleLogsByRuleId(String ruleId);
 }

@@ -18,8 +18,15 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<MethodResult> handleBusinessException(BusinessException ex) {
         log.warn("Business exception: [{}] {}", ex.getErrorCode(), ex.getMessage());
+
+        HttpStatus status = switch (ex.getErrorCode()) {
+            case "RULE_VALIDATION_ERROR" -> HttpStatus.UNPROCESSABLE_ENTITY;  // 422
+            case "RULE_DEPLOY_ERROR"     -> HttpStatus.BAD_GATEWAY;           // 502
+            default                      -> HttpStatus.BAD_REQUEST;           // 400
+        };
+
         return ResponseEntity
-                .status(HttpStatus.BAD_REQUEST)
+                .status(status)
                 .body(MethodResult.error(ex.getMessage()));
     }
 

@@ -108,77 +108,26 @@ public class ProfileMergeDecisionService {
                 && StringUtils.hasText(candidateEmail)
                 && !incomingEmail.equals(candidateEmail);
 
-        boolean isCrm = "CRM".equalsIgnoreCase(sourceSystem);
-        boolean isCms = "CMS".equalsIgnoreCase(sourceSystem);
-        boolean isPortal = "PORTAL".equalsIgnoreCase(sourceSystem);
-        boolean isMyVnpost = "MYVNPOST".equalsIgnoreCase(sourceSystem);
 
         if (identityNoConflict) {
-            log.info("ProfileMergeDecisionService - identityNo conflict, NEED_REVIEW");
+            return MergeDecision.NEED_REVIEW;
+        }
+        if (identityNoMatch) {
+            return MergeDecision.AUTO_MERGE;
+        }
+
+        if (phoneMatch && !emailConflict) {
+            return MergeDecision.AUTO_MERGE;
+        }
+
+        if (emailMatch && !phoneConflict) {
+            return MergeDecision.AUTO_MERGE;
+        }
+        if (phoneConflict || emailConflict) {
             return MergeDecision.NEED_REVIEW;
         }
 
-        if (isCrm) {
-            if (identityNoMatch) {
-                log.info("ProfileMergeDecisionService - CRM identityNo match, AUTO_MERGE");
-                return MergeDecision.AUTO_MERGE;
-            }
-
-            if (phoneMatch && !emailConflict) {
-                log.info("ProfileMergeDecisionService - CRM phone match and no email conflict, AUTO_MERGE");
-                return MergeDecision.AUTO_MERGE;
-            }
-
-            if (emailMatch && !phoneConflict) {
-                log.info("ProfileMergeDecisionService - CRM email match and no phone conflict, AUTO_MERGE");
-                return MergeDecision.AUTO_MERGE;
-            }
-
-            log.info("ProfileMergeDecisionService - CRM ambiguous/conflict, NEED_REVIEW");
-            return MergeDecision.NEED_REVIEW;
-        }
-
-        if (isCms) {
-            /*
-             * Case 3:
-             * CMS same email but different phone.
-             * This is field-level conflict, not auto merge.
-             */
-            if ((emailMatch && phoneConflict) || (phoneMatch && emailConflict)) {
-                log.info("ProfileMergeDecisionService - CMS matched but identity field conflict, NEED_REVIEW");
-                return MergeDecision.NEED_REVIEW;
-            }
-
-            if (identityNoMatch || phoneMatch || emailMatch) {
-                log.info("ProfileMergeDecisionService - CMS matched existing profile but not linked, NEED_REVIEW");
-                return MergeDecision.NEED_REVIEW;
-            }
-
-            log.info("ProfileMergeDecisionService - CMS ambiguous, NEED_REVIEW");
-            return MergeDecision.NEED_REVIEW;
-        }
-
-        if (isPortal || isMyVnpost) {
-            /*
-             * Case 4:
-             * PORTAL same phone but different email.
-             * This should become match candidate, not field conflict.
-             */
-            if (phoneMatch || emailMatch || identityNoMatch) {
-                log.info("ProfileMergeDecisionService - {} soft matched existing profile, CREATE_MATCH_CANDIDATE", sourceSystem);
-                return MergeDecision.CREATE_MATCH_CANDIDATE;
-            }
-
-            /*
-             * If no direct phone/email/identity match, but matching service still returned one candidate,
-             * it is probably a fuzzy match by name/province.
-             * This should also become match candidate.
-             */
-            log.info("ProfileMergeDecisionService - {} fuzzy/ambiguous candidate, CREATE_MATCH_CANDIDATE", sourceSystem);
-            return MergeDecision.CREATE_MATCH_CANDIDATE;
-        }
-
-        log.info("ProfileMergeDecisionService - unhandled valid sourceSystem={}, NEED_REVIEW", sourceSystem);
+        log.info("No strong match found -> CREATE_MATCH_CANDIDATE");
         return MergeDecision.NEED_REVIEW;
     }
 

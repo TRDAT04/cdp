@@ -1,4 +1,4 @@
-package vn.vnpost.cdp.rule.config;
+package vn.vnpost.cdp.rule.dto;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -9,8 +9,7 @@ import java.util.List;
 
 
 @Data
-public class RuleConfig {
-
+public class RuleRequest {
     private String ruleId;
 
     @NotBlank(message = "rule name must not be blank")
@@ -30,5 +29,5 @@ public class RuleConfig {
 
     @NotEmpty(message = "actions must not be empty — a rule with no actions is a no-op")
     @Valid
-    private List<RuleActionConfig> actions;
+    private List<RuleActionRequest> actions;
 }
