@@ -50,3 +50,28 @@ COMMENT ON COLUMN customer_events.properties         IS 'Payload tùy ý theo t�
 COMMENT ON COLUMN customer_events.source             IS 'Nguồn phát sinh event (hệ thống, kênh, thiết bị) (JSONB)';
 COMMENT ON COLUMN customer_events.target             IS 'Đối tượng bị tác động bởi event (sản phẩm, đơn hàng, ...) (JSONB)';
 COMMENT ON COLUMN customer_events.sync_status        IS '0=PENDING, 1=SUCCESS, 2=FAILED, 3=UNMATCHED';
+
+////////////////////////
+CREATE TABLE cdp_event_schemas (
+    id BIGSERIAL PRIMARY KEY,
+
+    event_type VARCHAR(100) NOT NULL,
+
+    schema_version VARCHAR(50) NOT NULL,
+
+    source_system VARCHAR(100),
+
+    json_schema JSONB NOT NULL,
+
+    description TEXT,
+
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    modified TIMESTAMP,
+
+    created_by VARCHAR(100),
+
+    modified_by VARCHAR(100),
+
+    CONSTRAINT uq_event_schema UNIQUE(event_type, schema_version)
+);

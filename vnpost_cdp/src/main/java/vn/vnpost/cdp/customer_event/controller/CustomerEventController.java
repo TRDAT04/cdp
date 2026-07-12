@@ -19,7 +19,7 @@ import vn.vnpost.cdp.customer_event.service.CustomerEventService;
 
 @Slf4j
 @RestController
-@RequestMapping("/v1/customer-events")
+@RequestMapping("/v1/admin/customer-events")
 public class CustomerEventController {
 
     private final CustomerEventProducer customerEventProducer;

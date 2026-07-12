@@ -88,10 +88,7 @@ public class ProfileMergeDecisionService {
         // ── Normalize identity fields for deterministic comparison ──
         String incomingIdNo   = IdentityUtils.normalizeText(data.getIdentityNo());
         String candidateIdNo  = IdentityUtils.normalizeText(candidate.getIdentityNo());
-        String incomingPhone  = IdentityUtils.normalizePhone(data.getPhone());
-        String candidatePhone = IdentityUtils.normalizePhone(candidate.getPhone());
-        String incomingEmail  = IdentityUtils.normalizeEmail(data.getEmail());
-        String candidateEmail = IdentityUtils.normalizeEmail(candidate.getEmail());
+
 
         boolean identityNoMatch    = hasText(incomingIdNo)  && hasText(candidateIdNo)  && incomingIdNo.equals(candidateIdNo);
         boolean identityNoConflict = hasText(incomingIdNo)  && hasText(candidateIdNo)  && !incomingIdNo.equals(candidateIdNo);

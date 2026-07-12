@@ -81,6 +81,25 @@ public class UnomiClient {
                 });
     }
 
+    public Mono<Object> createEventSchema(Map<String, Object> schema) {
+
+        String eventType = String.valueOf(
+                ((Map<?, ?>) schema.get("self")).get("name"));
+
+        return unomiWebClient.post()
+                .uri("/cxs/jsonSchema")
+                .bodyValue(schema)
+                .retrieve()
+                .bodyToMono(Object.class)
+                .doOnSuccess(res ->
+                        log.info("Create event schema success: eventType={}", eventType))
+                .doOnError(WebClientResponseException.class, ex ->
+                        log.error("Create event schema failed: eventType={}, status={}, body={}",
+                                eventType,
+                                ex.getStatusCode(),
+                                ex.getResponseBodyAsString()));
+    }
+
     public Mono<Object> sendEvent(UnomiEventRequest request) {
         log.info("UnomiClient - sendEvent: eventType={}, profileId={}",
                 request.getEventType(), request.getProfileId());
@@ -129,28 +148,7 @@ public class UnomiClient {
                 });
     }
 
-    public Mono<Object> deleteProfile(String profileId) {
-        log.info("UnomiClient - deleteProfile: profileId={}", profileId);
-        return unomiWebClient.delete()
-                .uri("/cxs/profiles/{profileId}", profileId)
-                .retrieve()
-                .bodyToMono(Object.class)
-                .doOnSuccess(res -> log.info("UnomiClient - deleteProfile success: profileId={}", profileId))
-                .onErrorResume(WebClientResponseException.class, ex -> {
-                    log.error("UnomiClient - deleteProfile error: profileId={}, status={}, body={}",
-                            profileId, ex.getStatusCode(), ex.getResponseBodyAsString());
-                    return Mono.error(new BusinessException(
-                            "UNOMI_ERROR",
-                            "Unomi API error [" + ex.getStatusCode() + "]: " + ex.getResponseBodyAsString()));
-                })
-                .onErrorResume(BusinessException.class, Mono::error)
-                .onErrorResume(Exception.class, ex -> {
-                    log.error("UnomiClient - deleteProfile unexpected error: profileId={}", profileId, ex);
-                    return Mono.error(new BusinessException(
-                            "UNOMI_COMMUNICATION_ERROR",
-                            "Failed to communicate with Unomi: " + ex.getMessage()));
-                });
-    }
+
 
     public Mono<List<UnomiSegmentResponse>> getSegments() {
 
