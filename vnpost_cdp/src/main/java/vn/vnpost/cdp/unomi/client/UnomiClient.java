@@ -51,17 +51,7 @@ public class UnomiClient {
                 .bodyToMono(UnomiProfileSearchResponse.class);
     }
 
-    /**
-     * Tìm kiếm các Unomi profile theo danh sách {@code profileCodes} bằng 1 request duy nhất.
-     * <p>
-     * Sử dụng {@code booleanCondition} với {@code operator = "or"} để tránh N+1 request.
-     * Khi Unomi không phản hồi hoặc trả lỗi, method này log WARN và trả {@code Mono.empty()}
-     * để caller xử lý graceful degradation (không ném exception ra ngoài).
-     * </p>
-     *
-     * @param profileCodes danh sách profileCode cần tra cứu (tương ứng properties.cdpProfileCode)
-     * @return Mono chứa kết quả tìm kiếm, hoặc Mono.empty() nếu Unomi lỗi
-     */
+
     public Mono<UnomiProfileSearchResponse> searchProfilesByCodes(List<String> profileCodes) {
         if (CollectionUtils.isEmpty(profileCodes)) {
             return Mono.just(

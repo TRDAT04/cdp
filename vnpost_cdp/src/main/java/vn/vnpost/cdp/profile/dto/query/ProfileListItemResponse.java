@@ -36,29 +36,22 @@ public class ProfileListItemResponse {
 
     // ---- Dữ liệu hành vi từ Apache Unomi ----
 
-    /** Danh sách segment ID mà profile đang thuộc. Mặc định [] khi Unomi không phản hồi. */
+
     @Builder.Default
     private List<String> segments = Collections.emptyList();
 
-    /** Thời điểm truy cập đầu tiên (UTC). */
     private Instant firstVisit;
 
-    /** Thời điểm truy cập trước lần cuối cùng (UTC). */
     private Instant previousVisit;
 
-    /** Thời điểm truy cập gần nhất (UTC). */
     private Instant lastVisit;
 
-    /** Tổng số lần truy cập. */
     private Integer nbOfVisits;
 
-    /** Tổng số lần mua hàng. */
     private Integer purchaseCount;
 
-    /** Tổng giá trị giao dịch. */
     private BigDecimal totalSpent;
 
-    /** Thời điểm giao dịch gần nhất (UTC). */
     private Instant lastTransactionDate;
 }
 

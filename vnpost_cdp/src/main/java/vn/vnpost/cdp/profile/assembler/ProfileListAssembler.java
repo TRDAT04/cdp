@@ -15,27 +15,11 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/**
- * Chịu trách nhiệm duy nhất: merge dữ liệu từ {@link MasterProfile} (PostgreSQL)
- * với dữ liệu hành vi từ {@link UnomiProfileResponse} (Apache Unomi)
- * thành {@link ProfileListItemResponse}.
- * <p>
- * Class này không gọi DB, không gọi HTTP – chỉ thực hiện mapping và merge.
- * Service chỉ cần điều phối, không cần biết chi tiết merge logic.
- * </p>
- */
+
 @Component
 public class ProfileListAssembler {
 
-    /**
-     * Tạo Map index theo {@code cdpProfileCode} từ danh sách profile Unomi trả về.
-     * <p>
-     * Phức tạp O(n) – không duyệt lồng nhau.
-     * </p>
-     *
-     * @param unomiProfiles danh sách profile từ Unomi
-     * @return Map với key là cdpProfileCode, value là UnomiProfileResponse
-     */
+
     public Map<String, UnomiProfileResponse> buildUnomiIndex(List<UnomiProfileResponse> unomiProfiles) {
         if (CollectionUtils.isEmpty(unomiProfiles)) {
             return Collections.emptyMap();
@@ -50,16 +34,7 @@ public class ProfileListAssembler {
                 ));
     }
 
-    /**
-     * Assemble một {@link ProfileListItemResponse} từ dữ liệu DB và Unomi.
-     *
-     * @param profile        bản ghi MasterProfile từ PostgreSQL
-     * @param unomiData      Unomi profile tương ứng, hoặc {@code null} khi Unomi không phản hồi
-     * @param warning        mảng 2 phần tử: [warningStatus, warningText]
-     * @param sourceSystems  danh sách source system đang active
-     * @param lastActivityAt thời điểm hoạt động cuối cùng
-     * @return DTO đã được merge đầy đủ
-     */
+
     public ProfileListItemResponse assemble(
             MasterProfile profile,
             UnomiProfileResponse unomiData,
