@@ -1,5 +1,6 @@
 package vn.vnpost.cdp.unomi.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -12,6 +13,7 @@ import java.util.Map;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class UnomiProfileResponse {
 
     private String itemId;
@@ -20,10 +22,12 @@ public class UnomiProfileResponse {
 
     private Integer version;
 
-    private Map<String, Object> properties;
+    /** Typed properties thay vì Map&lt;String, Object&gt; để type-safe và dễ bảo trì. */
+    private UnomiProfileProperties properties;
 
     private Map<String, Object> systemProperties;
 
+    /** Danh sách segment ID mà profile đang thuộc. */
     private List<String> segments;
 
     private Map<String, Object> scores;

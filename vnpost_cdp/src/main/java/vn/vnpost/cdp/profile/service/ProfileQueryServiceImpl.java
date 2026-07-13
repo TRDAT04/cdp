@@ -8,14 +8,20 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import vn.vnpost.cdp.common.exception.BusinessException;
+import vn.vnpost.cdp.profile.assembler.ProfileListAssembler;
 import vn.vnpost.cdp.profile.dto.query.*;
 import vn.vnpost.cdp.profile.entity.*;
 import vn.vnpost.cdp.profile.repository.*;
+import vn.vnpost.cdp.unomi.client.UnomiClient;
+import vn.vnpost.cdp.unomi.dto.UnomiProfileResponse;
+import vn.vnpost.cdp.unomi.dto.UnomiProfileSearchResponse;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -31,6 +37,8 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
     private final ProfileMatchCandidateRepository matchCandidateRepository;
     private final ProfileChangeLogRepository changeLogRepository;
     private final ProfileUnomiSyncLogRepository unomiSyncLogRepository;
+    private final UnomiClient unomiClient;
+    private final ProfileListAssembler profileListAssembler;
 
     public ProfileQueryServiceImpl(
             MasterProfileRepository masterProfileRepository,
@@ -40,7 +48,9 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
             ProfileMergeConflictRepository conflictRepository,
             ProfileMatchCandidateRepository matchCandidateRepository,
             ProfileChangeLogRepository changeLogRepository,
-            ProfileUnomiSyncLogRepository unomiSyncLogRepository) {
+            ProfileUnomiSyncLogRepository unomiSyncLogRepository,
+            UnomiClient unomiClient,
+            ProfileListAssembler profileListAssembler) {
         this.masterProfileRepository = masterProfileRepository;
         this.identityLinkRepository = identityLinkRepository;
         this.attributeValueRepository = attributeValueRepository;
@@ -49,6 +59,8 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
         this.matchCandidateRepository = matchCandidateRepository;
         this.changeLogRepository = changeLogRepository;
         this.unomiSyncLogRepository = unomiSyncLogRepository;
+        this.unomiClient = unomiClient;
+        this.profileListAssembler = profileListAssembler;
     }
 
     // =====================================================================
@@ -124,8 +136,32 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
     @Override
     public Page<ProfileListItemResponse> searchProfiles(ProfileSearchRequest request, Pageable pageable) {
         Specification<MasterProfile> spec = buildSpec(request);
-        return masterProfileRepository.findAll(spec, pageable)
-                .map(this::toListItem);
+        Page<MasterProfile> profilePage = masterProfileRepository.findAll(spec, pageable);
+
+        // Lấy danh sách profileCodes của trang hiện tại
+        List<String> profileCodes = profilePage.getContent().stream()
+                .map(MasterProfile::getProfileCode)
+                .filter(StringUtils::hasText)
+                .collect(Collectors.toList());
+
+        UnomiProfileSearchResponse unomiResponse = unomiClient
+                .searchProfilesByCodes(profileCodes)
+                .block();
+
+        Map<String, UnomiProfileResponse> unomiIndex =
+                profileListAssembler.buildUnomiIndex(unomiResponse.getList());
+
+        final Map<String, UnomiProfileResponse> finalIndex = unomiIndex;
+        return profilePage.map(profile -> {
+            List<ProfileIdentityLink> links = identityLinkRepository
+                    .findByMasterProfileIdAndStatus(profile.getId(), (short) 1);
+            List<String> sourceSystems = resolveSourceSystems(profile.getId(), links);
+            String[] warning = resolveWarning(profile.getId());
+            LocalDateTime lastActivityAt = resolveLastActivity(profile.getId(), profile, null);
+            UnomiProfileResponse unomiData = finalIndex.get(profile.getProfileCode());
+
+            return profileListAssembler.assemble(profile, unomiData, warning, sourceSystems, lastActivityAt);
+        });
     }
 
     private Specification<MasterProfile> buildSpec(ProfileSearchRequest request) {
@@ -169,34 +205,6 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
         };
     }
 
-    private ProfileListItemResponse toListItem(MasterProfile profile) {
-        Long profileId = profile.getId();
-        List<ProfileIdentityLink> links = identityLinkRepository.findByMasterProfileIdAndStatus(profileId, (short) 1);
-        List<String> sourceSystems = resolveSourceSystems(profileId, links);
-        String[] warning = resolveWarning(profileId);
-        LocalDateTime lastActivity = resolveLastActivity(profileId, profile, null);
-
-        return ProfileListItemResponse.builder()
-                .id(profile.getId())
-                .fullName(profile.getFullName())
-                .avatarText(buildAvatarText(profile.getFullName()))
-                .profileCode(profile.getProfileCode())
-                .phone(profile.getPhone())
-                .email(profile.getEmail())
-                .customerType(profile.getCustomerType())
-                .customerTypeText(mapCustomerTypeText(profile.getCustomerType()))
-                .warningStatus(warning[0])
-                .warningText(warning[1])
-                .sourceSystems(sourceSystems)
-                .lastActivityAt(lastActivity)
-                .status(profile.getStatus())
-                .statusText(mapStatusText(profile.getStatus()))
-                .build();
-    }
-
-    // =====================================================================
-    // HELPER: resolveSourceSystems
-    // =====================================================================
 
     private List<String> resolveSourceSystems(Long profileId, List<ProfileIdentityLink> links) {
         if (links == null) {
@@ -231,7 +239,6 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
 
     private LocalDateTime resolveLastActivity(Long profileId, MasterProfile profile,
                                                List<ProfileAttributeValue> attrs) {
-        // Try attribute values first
         var activityAttr = attributeValueRepository
                 .findTopByMasterProfileIdAndPropertyNameInOrderByReceivedAtDesc(
                         profileId, List.of("lastVisitAt", "lastActivityAt"))
@@ -239,64 +246,11 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
         if (activityAttr != null) {
             return activityAttr.getReceivedAt();
         }
-        // Fallback to modified/created
         if (profile.getModified() != null) return profile.getModified();
         return profile.getCreated();
     }
 
-    // =====================================================================
-    // HELPER: buildAvatarText
-    // Takes first letter of each word, max 2 chars
-    // =====================================================================
 
-    private String buildAvatarText(String fullName) {
-        if (!StringUtils.hasText(fullName)) return "?";
-        String[] parts = fullName.trim().split("\\s+");
-        if (parts.length == 1) return parts[0].substring(0, 1).toUpperCase();
-        // Take first letter of first word and first letter of last word
-        String first = parts[0].substring(0, 1).toUpperCase();
-        String last  = parts[parts.length - 1].substring(0, 1).toUpperCase();
-        return first + last;
-    }
-
-    // =====================================================================
-    // TEXT MAPPERS
-    // =====================================================================
-
-    private String mapCustomerTypeText(String type) {
-        if (type == null) return null;
-        return switch (type.toUpperCase()) {
-            case "PERSONAL", "CA_NHAN" -> "Cá nhân";
-            case "FREQUENT", "THUONG_XUYEN" -> "Thường xuyên";
-            case "VIP" -> "VIP";
-            default -> type;
-        };
-    }
-
-    private String mapStatusText(Short status) {
-        if (status == null) return null;
-        return switch (status) {
-            case 1 -> "Hoạt động";
-            case 2 -> "Không hoạt động";
-            case 3 -> "Đã merge";
-            case 4 -> "Bị chặn";
-            case 5 -> "Đã xóa";
-            default -> String.valueOf(status);
-        };
-    }
-
-    private String mapMergeStatusText(Short status) {
-        if (status == null) return null;
-        return switch (status) {
-            case 0 -> "Chờ xử lý";
-            case 1 -> "Đã merge";
-            case 2 -> "Xung đột";
-            case 3 -> "Bị từ chối";
-            case 4 -> "Cần rà soát";
-            case 5 -> "Lỗi";
-            default -> String.valueOf(status);
-        };
-    }
 
     private String mapConflictStatusText(Short status) {
         if (status == null) return null;
@@ -463,4 +417,44 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
                 .syncedAt(e.getSyncedAt())
                 .build();
     }
+
+    // =====================================================================
+    // TEXT MAPPERS – dùng cho getProfileDetail
+    // =====================================================================
+
+    private String mapStatusText(Short status) {
+        if (status == null) return null;
+        return switch (status) {
+            case 1 -> "Hoạt động";
+            case 2 -> "Không hoạt động";
+            case 3 -> "Đã merge";
+            case 4 -> "Bị chặn";
+            case 5 -> "Đã xóa";
+            default -> String.valueOf(status);
+        };
+    }
+
+    private String mapCustomerTypeText(String type) {
+        if (type == null) return null;
+        return switch (type.toUpperCase()) {
+            case "PERSONAL", "CA_NHAN"       -> "Cá nhân";
+            case "FREQUENT", "THUONG_XUYEN"  -> "Thường xuyên";
+            case "VIP"                       -> "VIP";
+            default                          -> type;
+        };
+    }
+
+    private String mapMergeStatusText(Short status) {
+        if (status == null) return null;
+        return switch (status) {
+            case 0 -> "Chờ xử lý";
+            case 1 -> "Đã merge";
+            case 2 -> "Xung đột";
+            case 3 -> "Bị từ chối";
+            case 4 -> "Cần rà soát";
+            case 5 -> "Lỗi";
+            default -> String.valueOf(status);
+        };
+    }
 }
+

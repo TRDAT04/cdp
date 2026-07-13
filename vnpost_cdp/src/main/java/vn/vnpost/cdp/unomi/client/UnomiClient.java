@@ -6,12 +6,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.common.exception.BusinessException;
+import vn.vnpost.cdp.unomi.builder.UnomiQueryBuilder;
 import vn.vnpost.cdp.unomi.dto.*;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,9 +24,12 @@ import java.util.Map;
 public class UnomiClient {
 
     private final WebClient unomiWebClient;
+    private final UnomiQueryBuilder unomiQueryBuilder;
 
-    public UnomiClient(@Qualifier("unomiWebClient") WebClient unomiWebClient) {
+    public UnomiClient(@Qualifier("unomiWebClient") WebClient unomiWebClient,
+                       UnomiQueryBuilder unomiQueryBuilder) {
         this.unomiWebClient = unomiWebClient;
+        this.unomiQueryBuilder = unomiQueryBuilder;
     }
 
 
@@ -43,6 +49,51 @@ public class UnomiClient {
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(UnomiProfileSearchResponse.class);
+    }
+
+    /**
+     * Tìm kiếm các Unomi profile theo danh sách {@code profileCodes} bằng 1 request duy nhất.
+     * <p>
+     * Sử dụng {@code booleanCondition} với {@code operator = "or"} để tránh N+1 request.
+     * Khi Unomi không phản hồi hoặc trả lỗi, method này log WARN và trả {@code Mono.empty()}
+     * để caller xử lý graceful degradation (không ném exception ra ngoài).
+     * </p>
+     *
+     * @param profileCodes danh sách profileCode cần tra cứu (tương ứng properties.cdpProfileCode)
+     * @return Mono chứa kết quả tìm kiếm, hoặc Mono.empty() nếu Unomi lỗi
+     */
+    public Mono<UnomiProfileSearchResponse> searchProfilesByCodes(List<String> profileCodes) {
+        if (CollectionUtils.isEmpty(profileCodes)) {
+            return Mono.just(
+                    UnomiProfileSearchResponse.builder()
+                            .list(Collections.emptyList())
+                            .build()
+            );
+        }
+
+        log.debug("UnomiClient - searchProfilesByCodes: count={}", profileCodes.size());
+        UnomiProfileSearchRequest request = unomiQueryBuilder.buildSearchByProfileCodes(profileCodes);
+
+        return unomiWebClient
+                .post()
+                .uri("/cxs/profiles/search")
+                .bodyValue(request)
+                .retrieve()
+                .bodyToMono(UnomiProfileSearchResponse.class)
+                .doOnSuccess(res -> log.debug(
+                        "UnomiClient - searchProfilesByCodes success: requested={}, returned={}",
+                        profileCodes.size(),
+                        res != null && res.getList() != null ? res.getList().size() : 0))
+                .onErrorResume(ex -> {
+                    log.warn("UnomiClient - searchProfilesByCodes failed, will degrade gracefully. Error: {}",
+                            ex.getMessage());
+
+                    return Mono.just(
+                            UnomiProfileSearchResponse.builder()
+                                    .list(Collections.emptyList())
+                                    .build()
+                    );
+                });
     }
 
     public Mono<UnomiProfileResponse> getProfileByItemId(String itemId) {

@@ -17,7 +17,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.common.response.MethodResult;
 import vn.vnpost.cdp.profile.dto.MasterProfileCreateRequest;
 import vn.vnpost.cdp.profile.dto.MasterProfileResponse;
@@ -27,7 +26,6 @@ import vn.vnpost.cdp.profile.dto.query.ProfileListItemResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileSearchRequest;
 import vn.vnpost.cdp.profile.service.MasterProfileService;
 import vn.vnpost.cdp.profile.service.ProfileQueryService;
-import vn.vnpost.cdp.unomi.dto.UnomiProfileSearchResponse;
 
 import java.time.LocalDate;
 
