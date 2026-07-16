@@ -9,7 +9,7 @@ import vn.vnpost.cdp.profile.dto.ProfileMergeRequestCreateRequest;
 import vn.vnpost.cdp.profile.service.ProfileMergeRequestService;
 
 @RestController
-@RequestMapping("/v1/admin/profile-merge-requests")
+@RequestMapping("/api/v1/admin/profile-merge-requests")
 public class ProfileMergeRequestController {
 
     private final ProfileMergeRequestService service;

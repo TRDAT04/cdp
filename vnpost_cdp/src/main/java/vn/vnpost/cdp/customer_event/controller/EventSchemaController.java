@@ -11,7 +11,7 @@ import vn.vnpost.cdp.customer_event.service.EventSchemaService;
 
 @Controller
 @RequiredArgsConstructor
-@RequestMapping("/v1/eventSchemas")
+@RequestMapping("/api/v1/eventSchemas")
 @RestController
 public class EventSchemaController {
     private final EventSchemaService eventSchemaService;

@@ -31,7 +31,7 @@ import java.time.LocalDate;
 
 @Slf4j
 @RestController
-@RequestMapping("/v1/admin/profiles")
+@RequestMapping("/api/v1/admin/profiles")
 public class MasterProfileController {
 
     private final MasterProfileService masterProfileService;

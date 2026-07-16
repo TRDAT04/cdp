@@ -14,7 +14,7 @@ import java.util.List;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/v1/admin/segments")
+@RequestMapping("/api/v1/admin/segments")
 public class UnomiSegmentController {
 
     private final UnomiSegmentService segmentService;

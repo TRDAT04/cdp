@@ -30,7 +30,7 @@ public class ProfileListAssembler {
                 .collect(Collectors.toMap(
                         p -> p.getProperties().getCdpProfileCode(),
                         Function.identity(),
-                        (existing, duplicate) -> existing // giữ bản đầu tiên nếu trùng key
+                        (existing, duplicate) -> existing
                 ));
     }
 

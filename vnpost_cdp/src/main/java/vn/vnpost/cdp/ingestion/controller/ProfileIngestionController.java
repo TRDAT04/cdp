@@ -15,7 +15,7 @@ import java.util.Map;
 
 @Slf4j
 @RestController
-@RequestMapping("/v1/test/profile-ingestion")
+@RequestMapping("/api/v1/test/profile-ingestion")
 public class ProfileIngestionController {
 
     private final ProfileIngestionProducer profileIngestionProducer;

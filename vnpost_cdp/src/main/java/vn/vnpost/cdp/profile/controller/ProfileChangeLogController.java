@@ -8,7 +8,7 @@ import vn.vnpost.cdp.profile.dto.ProfileChangeLogCreateRequest;
 import vn.vnpost.cdp.profile.service.ProfileChangeLogService;
 
 @RestController
-@RequestMapping("/v1/admin/profile-change-logs")
+@RequestMapping("/api/v1/admin/profile-change-logs")
 public class ProfileChangeLogController {
 
     private final ProfileChangeLogService service;

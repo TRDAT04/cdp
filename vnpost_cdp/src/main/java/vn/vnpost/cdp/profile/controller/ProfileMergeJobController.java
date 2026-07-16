@@ -9,7 +9,7 @@ import vn.vnpost.cdp.profile.dto.ProfileMergeJobUpdateRequest;
 import vn.vnpost.cdp.profile.service.ProfileMergeJobService;
 
 @RestController
-@RequestMapping("/v1/admin/profile-merge-jobs")
+@RequestMapping("/api/v1/admin/profile-merge-jobs")
 public class ProfileMergeJobController {
 
     private final ProfileMergeJobService service;

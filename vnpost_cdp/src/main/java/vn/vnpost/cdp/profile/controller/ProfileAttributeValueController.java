@@ -9,7 +9,7 @@ import vn.vnpost.cdp.profile.dto.ProfileAttributeValueUpdateRequest;
 import vn.vnpost.cdp.profile.service.ProfileAttributeValueService;
 
 @RestController
-@RequestMapping("/v1/admin/profile-attribute-values")
+@RequestMapping("/api/v1/admin/profile-attribute-values")
 public class ProfileAttributeValueController {
 
     private final ProfileAttributeValueService service;

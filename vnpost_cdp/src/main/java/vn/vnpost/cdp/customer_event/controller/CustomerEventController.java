@@ -19,7 +19,7 @@ import vn.vnpost.cdp.customer_event.service.CustomerEventService;
 
 @Slf4j
 @RestController
-@RequestMapping("/v1/admin/customer-events")
+@RequestMapping("/api/v1/admin/customer-events")
 public class CustomerEventController {
 
     private final CustomerEventProducer customerEventProducer;
@@ -33,7 +33,7 @@ public class CustomerEventController {
 
     @PostMapping("/send")
     public ResponseEntity<MethodResult> send(@Valid @RequestBody CustomerEventRequest request) {
-        log.info("POST /v1/customer-events/send - sourceSystem={}, sourceCustomerId={}, eventType={}",
+        log.info("POST /api/v1/customer-events/send - sourceSystem={}, sourceCustomerId={}, eventType={}",
                 request.getSourceSystem(),
                 request.getSourceCustomerId(),
                 request.getEventType());
@@ -47,7 +47,7 @@ public class CustomerEventController {
             @ModelAttribute CustomerEventSearchRequest request,
             @PageableDefault(sort = "occurredAt", direction = Sort.Direction.DESC) Pageable pageable) {
 
-        log.info("GET /v1/customer-events - masterProfileId={}, eventType={}, timeRangeDays={}",
+        log.info("GET /api/v1/customer-events - masterProfileId={}, eventType={}, timeRangeDays={}",
                 request.getMasterProfileId(), request.getEventType(), request.getTimeRangeDays());
 
         Page<CustomerEventDetailResponse> result =customerEventService.searchEvents(request, pageable);

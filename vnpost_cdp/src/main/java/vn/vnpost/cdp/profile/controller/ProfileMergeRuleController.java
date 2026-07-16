@@ -10,7 +10,7 @@ import vn.vnpost.cdp.profile.dto.ProfileMergeRuleUpdateRequest;
 import vn.vnpost.cdp.profile.service.ProfileMergeRuleService;
 
 @RestController
-@RequestMapping("/v1/admin/profile-merge-rules")
+@RequestMapping("/api/v1/admin/profile-merge-rules")
 public class ProfileMergeRuleController {
 
     private final ProfileMergeRuleService service;

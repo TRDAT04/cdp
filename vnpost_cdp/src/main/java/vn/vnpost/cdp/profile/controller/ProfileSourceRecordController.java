@@ -9,7 +9,7 @@ import vn.vnpost.cdp.profile.dto.ProfileSourceRecordUpdateRequest;
 import vn.vnpost.cdp.profile.service.ProfileSourceRecordService;
 
 @RestController
-@RequestMapping("/v1/admin/profile-source-records")
+@RequestMapping("/api/v1/admin/profile-source-records")
 public class ProfileSourceRecordController {
 
     private final ProfileSourceRecordService service;

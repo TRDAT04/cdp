@@ -9,7 +9,7 @@ import vn.vnpost.cdp.profile.dto.ProfileSourceSystemUpdateRequest;
 import vn.vnpost.cdp.profile.service.ProfileSourceSystemService;
 
 @RestController
-@RequestMapping("/v1/admin/profile-source-systems")
+@RequestMapping("/api/v1/admin/profile-source-systems")
 public class ProfileSourceSystemController {
 
     private final ProfileSourceSystemService service;

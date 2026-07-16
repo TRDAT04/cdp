@@ -18,7 +18,9 @@ public class CustomerEventConsumer {
         this.customerEventService = customerEventService;
     }
 
-    @KafkaListener(topics = "${app.kafka.topic.customer-event:cdp.customer.events}", groupId = "${spring.kafka.consumer.group-id:vnpost-cdp-group}", containerFactory = "customerEventKafkaListenerContainerFactory")
+    @KafkaListener(topics = "${app.kafka.topic.customer-event:cdp.customer.events}",
+            groupId = "${spring.kafka.consumer.group-id:vnpost-cdp-group}",
+            containerFactory = "customerEventKafkaListenerContainerFactory")
 
     public void consume(ConsumerRecord<String, CustomerEventMessage> record,
             Acknowledgment acknowledgment) {

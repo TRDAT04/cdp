@@ -9,7 +9,7 @@ import vn.vnpost.cdp.profile.dto.ProfileIdentityLinkUpdateRequest;
 import vn.vnpost.cdp.profile.service.ProfileIdentityLinkService;
 
 @RestController
-@RequestMapping("/v1/admin/profile-identity-links")
+@RequestMapping("/api/v1/admin/profile-identity-links")
 public class ProfileIdentityLinkController {
 
     private final ProfileIdentityLinkService service;

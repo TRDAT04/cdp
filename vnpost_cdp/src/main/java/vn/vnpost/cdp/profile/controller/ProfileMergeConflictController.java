@@ -9,7 +9,7 @@ import vn.vnpost.cdp.profile.dto.ProfileMergeConflictResolveRequest;
 import vn.vnpost.cdp.profile.service.ProfileMergeConflictService;
 
 @RestController
-@RequestMapping("/v1/admin/profile-merge-conflicts")
+@RequestMapping("/api/v1/admin/profile-merge-conflicts")
 public class ProfileMergeConflictController {
 
     private final ProfileMergeConflictService service;

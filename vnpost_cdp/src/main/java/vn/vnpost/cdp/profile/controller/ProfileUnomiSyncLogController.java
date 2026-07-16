@@ -10,7 +10,7 @@ import vn.vnpost.cdp.profile.service.ProfileUnomiSyncLogService;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/v1/admin/profile-unomi-sync-logs")
+@RequestMapping("/api/v1/admin/profile-unomi-sync-logs")
 public class ProfileUnomiSyncLogController {
 
     private final ProfileUnomiSyncLogService service;

@@ -10,7 +10,7 @@ import vn.vnpost.cdp.profile.service.match.ProfileMatchCandidateService;
 
 @Slf4j
 @RestController
-@RequestMapping("/v1/admin/profile-match-candidates")
+@RequestMapping("/api/v1/admin/profile-match-candidates")
 public class ProfileMatchCandidateController {
 
     private final ProfileMatchCandidateService candidateService;

@@ -165,7 +165,7 @@ public class UnomiClient {
             log.warn("Cannot serialize payload", e);
         }
         return unomiWebClient.post()
-                .uri("/cxs/eventcollector")
+                    .uri("/cxs/eventcollector")
                 .bodyValue(payload)
                 .retrieve()
                 .bodyToMono(Object.class)
