@@ -21,6 +21,8 @@ public class ProfileIdentityLinkDetailResponse {
     private String identityType;
     private String identityValue;
     private BigDecimal confidenceScore;
+    /** Nhãn mức độ tin cậy: "Cao" (≥90), "Trung bình" (70–89), "Thấp" (<70). */
+    private String confidenceLevel;
     private Boolean isPrimary;
     private Short status;
     private String statusText;

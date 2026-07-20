@@ -51,6 +51,9 @@ public class MasterProfile extends BaseEntity {
     @Column(name = "customer_type", length = 100)
     private String customerType;
 
+    @Column(name = "customer_group", length = 50)
+    private String customerGroup;
+
     @Column(name = "province_code", length = 50)
     private String provinceCode;
 

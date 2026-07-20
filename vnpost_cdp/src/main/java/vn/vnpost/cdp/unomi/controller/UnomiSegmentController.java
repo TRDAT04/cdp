@@ -6,11 +6,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import vn.vnpost.cdp.unomi.dto.UnomiSegmentDetailResponse;
-import vn.vnpost.cdp.unomi.dto.UnomiSegmentResponse;
+import vn.vnpost.cdp.common.response.MethodResult;
 import vn.vnpost.cdp.unomi.service.UnomiSegmentService;
-
-import java.util.List;
 
 @RestController
 @RequiredArgsConstructor
@@ -20,19 +17,19 @@ public class UnomiSegmentController {
     private final UnomiSegmentService segmentService;
 
     @GetMapping
-    public ResponseEntity<List<UnomiSegmentResponse>> getSegments() {
-        return ResponseEntity.ok(segmentService.getSegments());
+    public ResponseEntity<MethodResult> getSegments() {
+        return ResponseEntity.ok(MethodResult.success(segmentService.getSegments()));
     }
 
     @GetMapping("/{segmentId}")
-    public ResponseEntity<UnomiSegmentDetailResponse> getSegmentDetail(
+    public ResponseEntity<MethodResult> getSegmentDetail(
             @PathVariable String segmentId) {
-        return ResponseEntity.ok(segmentService.getSegmentDetail(segmentId));
+        return ResponseEntity.ok(MethodResult.success(segmentService.getSegmentDetail(segmentId)));
     }
 
     @GetMapping("/{segmentId}/members")
-    public ResponseEntity<Object> getSegmentMembers(
+    public ResponseEntity<MethodResult> getSegmentMembers(
             @PathVariable String segmentId) {
-        return ResponseEntity.ok(segmentService.getSegmentMembers(segmentId));
+        return ResponseEntity.ok(MethodResult.success(segmentService.getSegmentMembers(segmentId)));
     }
 }

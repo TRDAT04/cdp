@@ -98,3 +98,54 @@
     }
   ]
 }
+
+
+{
+  "sourceSystem": "CRM",
+  "sourceCustomerId": "CRM-D001",
+  "eventType": "viewProduct",
+  "sessionId": "session-crm-d001-001",
+  "occurredAt": "2026-07-16T09:15:00",
+  "properties": {
+    "productId": "SP001",
+    "productName": "iPhone 15 Pro Max",
+    "category": "electronics",
+    "brand": "Apple",
+    "price": 34990000
+  },
+  "source": { "itemType": "system", "scope": "my-vnpost-app", "itemId": "CRM" },
+  "target": { "itemType": "product", "scope": "my-vnpost-app", "itemId": "SP001" }
+}
+
+{
+  "sourceSystem": "CAS",
+  "sourceCustomerId": "CAS-D003",
+  "eventType": "createOrder",
+  "sessionId": "session-cas-d003-001",
+  "occurredAt": "2026-07-16T11:45:00",
+  "properties": {
+    "orderId": "ORD-CAS-0003",
+    "amount": 45000000,
+    "orderStatus": "CREATED",
+    "serviceCode": "EMS"
+  },
+  "source": { "itemType": "system", "scope": "my-vnpost-app", "itemId": "CAS" },
+  "target": { "itemType": "order", "scope": "my-vnpost-app", "itemId": "ORD-CAS-0003" }
+}
+
+{
+  "sourceSystem": "PORTAL",
+  "sourceCustomerId": "PORTAL-D002",
+  "eventType": "addToCart",
+  "sessionId": "session-portal-d002-001",
+  "occurredAt": "2026-07-16T10:10:00",
+  "properties": {
+    "productId": "SP205",
+    "productName": "Túi xách da thật",
+    "quantity": 2,
+    "price": 2500000,
+    "category": "fashion"
+  },
+  "source": { "itemType": "system", "scope": "my-vnpost-app", "itemId": "PORTAL" },
+  "target": { "itemType": "product", "scope": "my-vnpost-app", "itemId": "SP205" }
+}

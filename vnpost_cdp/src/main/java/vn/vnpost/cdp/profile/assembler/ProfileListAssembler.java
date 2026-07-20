@@ -52,6 +52,7 @@ public class ProfileListAssembler {
                 .email(profile.getEmail())
                 .customerType(profile.getCustomerType())
                 .customerTypeText(mapCustomerTypeText(profile.getCustomerType()))
+                .customerGroup(profile.getCustomerGroup())
                 .warningStatus(warning[0])
                 .warningText(warning[1])
                 .sourceSystems(sourceSystems)

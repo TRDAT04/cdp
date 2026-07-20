@@ -72,8 +72,7 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
 
     @Override
     public ProfileDetailResponse getProfileDetail(Long id) {
-        MasterProfile profile = masterProfileRepository.findById(id)
-                .orElseThrow(() -> new BusinessException("NOT_FOUND", "Profile not found: " + id));
+        MasterProfile profile = findProfileOrThrow(id);
         Long profileId = profile.getId();
 
         List<ProfileIdentityLink> links = identityLinkRepository.findByMasterProfileId(profileId);
@@ -92,20 +91,91 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
         String[] warning = resolveWarning(profileId);
         LocalDateTime lastActivity = resolveLastActivity(profileId, profile, attrs);
 
-        UnomiProfileResponse unomiData = null;
-        if (StringUtils.hasText(profile.getProfileCode())) {
-            UnomiProfileSearchResponse unomiResponse = unomiClient
-                    .searchProfilesByCodes(List.of(profile.getProfileCode()))
-                    .block();
-            if (unomiResponse != null && !org.springframework.util.CollectionUtils.isEmpty(unomiResponse.getList())) {
-                unomiData = unomiResponse.getList().get(0);
-            }
-        }
+        UnomiProfileResponse unomiData = fetchUnomiData(profile);
 
         return profileDetailAssembler.assemble(
                 profile, unomiData, warning, sourceSystems, lastActivity,
                 links, attrs, records, conflicts, candidates, logs, latestSync
         );
+    }
+
+    // =====================================================================
+    // DETAIL - TÁCH THEO TAB
+    // =====================================================================
+
+    @Override
+    public ProfileOverviewResponse getProfileOverview(Long id) {
+        MasterProfile profile = findProfileOrThrow(id);
+        List<ProfileIdentityLink> links = identityLinkRepository.findByMasterProfileId(profile.getId());
+        UnomiProfileResponse unomiData = fetchUnomiData(profile);
+        return profileDetailAssembler.assembleOverview(profile, unomiData, links);
+    }
+
+    @Override
+    public List<ProfileIdentityLinkDetailResponse> getProfileIdentityLinks(Long id) {
+        MasterProfile profile = findProfileOrThrow(id);
+        List<ProfileIdentityLink> links = identityLinkRepository.findByMasterProfileId(profile.getId());
+        return profileDetailAssembler.toIdentityLinkResponses(links);
+    }
+
+    @Override
+    public ProfileMultiSourceComparisonResponse getProfileMultiSource(Long id) {
+        MasterProfile profile = findProfileOrThrow(id);
+        List<ProfileAttributeValue> attrs = attributeValueRepository.findByMasterProfileId(profile.getId());
+        return profileDetailAssembler.assembleMultiSource(profile, attrs);
+    }
+
+    @Override
+    public ProfileAddressResponse getProfileAddress(Long id) {
+        MasterProfile profile = findProfileOrThrow(id);
+        return profileDetailAssembler.assembleAddress(profile);
+    }
+
+    @Override
+    public ProfileDigitalBehaviorResponse getProfileBehavior(Long id) {
+        MasterProfile profile = findProfileOrThrow(id);
+        UnomiProfileResponse unomiData = fetchUnomiData(profile);
+        return profileDetailAssembler.assembleBehavior(unomiData);
+    }
+
+    @Override
+    public ProfileChangeLogsResponse getProfileChangeLogs(Long id) {
+        MasterProfile profile = findProfileOrThrow(id);
+        Long profileId = profile.getId();
+        List<ProfileChangeLog> logs = changeLogRepository.findTop20ByMasterProfileIdOrderByChangedAtDesc(profileId);
+        ProfileUnomiSyncLog latestSync = unomiSyncLogRepository
+                .findTopByMasterProfileIdOrderBySyncedAtDesc(profileId).orElse(null);
+        return profileDetailAssembler.assembleChangeLogs(logs, latestSync);
+    }
+
+    @Override
+    public vn.vnpost.cdp.profile.dto.query.ProfileSummaryResponse getProfileSummary(Long id) {
+        MasterProfile profile = findProfileOrThrow(id);
+        List<ProfileIdentityLink> links = identityLinkRepository.findByMasterProfileIdAndStatus(profile.getId(), (short) 1);
+        UnomiProfileResponse unomiData = fetchUnomiData(profile);
+        return profileDetailAssembler.assembleSummary(profile, unomiData, links);
+    }
+
+    // =====================================================================
+    // HELPER: dùng chung cho detail + các tab
+    // =====================================================================
+
+    private MasterProfile findProfileOrThrow(Long id) {
+        return masterProfileRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("NOT_FOUND", "Profile not found: " + id));
+    }
+
+    private UnomiProfileResponse fetchUnomiData(MasterProfile profile) {
+        if (!StringUtils.hasText(profile.getProfileCode())) {
+            return null;
+        }
+        UnomiProfileSearchResponse unomiResponse = unomiClient
+                .searchProfilesByCodes(List.of(profile.getProfileCode()))
+                .block();
+        if (unomiResponse != null && !org.springframework.util.CollectionUtils.isEmpty(unomiResponse.getList())) {
+            return unomiResponse.getList().get(0);
+        }
+        return null;
     }
 
     // =====================================================================

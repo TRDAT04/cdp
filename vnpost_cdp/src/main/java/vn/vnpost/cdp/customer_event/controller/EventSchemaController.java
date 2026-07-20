@@ -9,7 +9,7 @@ import vn.vnpost.cdp.customer_event.dto.EventSchemaRequest;
 import vn.vnpost.cdp.customer_event.dto.EventSchemaResponse;
 import vn.vnpost.cdp.customer_event.service.EventSchemaService;
 
-@Controller
+
 @RequiredArgsConstructor
 @RequestMapping("/api/v1/eventSchemas")
 @RestController

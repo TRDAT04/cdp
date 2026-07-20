@@ -27,6 +27,7 @@ public class ProfileListItemResponse {
     private String email;
     private String customerType;
     private String customerTypeText;
+    private String customerGroup;;
     private String warningStatus;
     private String warningText;
     private List<String> sourceSystems;

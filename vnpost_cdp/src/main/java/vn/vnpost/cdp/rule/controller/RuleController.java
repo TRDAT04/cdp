@@ -2,6 +2,7 @@ package vn.vnpost.cdp.rule.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
@@ -9,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import vn.vnpost.cdp.common.response.MethodResult;
+import vn.vnpost.cdp.rule.dto.RuleDeployLogResponse;
 import vn.vnpost.cdp.rule.dto.RuleRequest;
 import vn.vnpost.cdp.rule.service.RuleEngineService;
 
@@ -25,7 +27,8 @@ public class RuleController {
     @GetMapping
     public ResponseEntity<MethodResult> getAllRules(
             @PageableDefault(sort = "deployedAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        return ResponseEntity.ok(MethodResult.success(ruleEngineService.getAllRuleLogs(pageable)));
+        Page<RuleDeployLogResponse> result = ruleEngineService.getAllRuleLogs(pageable);
+        return ResponseEntity.ok(MethodResult.success(result.getContent(), result.getTotalElements()));
     }
 
     @GetMapping("/{ruleId}")

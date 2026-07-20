@@ -50,8 +50,8 @@ public class CustomerEventController {
         log.info("GET /api/v1/customer-events - masterProfileId={}, eventType={}, timeRangeDays={}",
                 request.getMasterProfileId(), request.getEventType(), request.getTimeRangeDays());
 
-        Page<CustomerEventDetailResponse> result =customerEventService.searchEvents(request, pageable);
+        Page<CustomerEventDetailResponse> result = customerEventService.searchEvents(request, pageable);
 
-        return ResponseEntity.ok(MethodResult.success(result));
+        return ResponseEntity.ok(MethodResult.success(result.getContent(), result.getTotalElements()));
     }
 }

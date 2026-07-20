@@ -67,7 +67,7 @@ public class MasterProfileController {
     @PostMapping
     public ResponseEntity<MethodResult> create(
             @Valid @RequestBody MasterProfileCreateRequest request) {
-        log.info("POST /v1/admin/profiles - profileCode={}", request.getProfileCode());
+        log.info("POST /api/v1/admin/profiles - profileCode={}", request.getProfileCode());
         MasterProfileResponse response = masterProfileService.create(request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(MethodResult.success(response));
@@ -77,28 +77,28 @@ public class MasterProfileController {
     public ResponseEntity<MethodResult> update(
             @PathVariable Long id,
             @Valid @RequestBody MasterProfileUpdateRequest request) {
-        log.info("PUT /v1/admin/profiles/{}", id);
+        log.info("PUT /api/v1/admin/profiles/{}", id);
         MasterProfileResponse response = masterProfileService.update(id, request);
         return ResponseEntity.ok(MethodResult.success(response));
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<MethodResult> getById(@PathVariable Long id) {
-        log.info("GET /v1/admin/profiles/{}", id);
-        MasterProfileResponse response = masterProfileService.getById(id);
-        return ResponseEntity.ok(MethodResult.success(response));
-    }
+//    @GetMapping("/{id}")
+//    public ResponseEntity<MethodResult> getById(@PathVariable Long id) {
+//        log.info("GET /api/v1/admin/profiles/{}", id);
+//        MasterProfileResponse response = masterProfileService.getById(id);
+//        return ResponseEntity.ok(MethodResult.success(response));
+//    }
 
     @GetMapping("/code/{profileCode}")
     public ResponseEntity<MethodResult> getByProfileCode(@PathVariable String profileCode) {
-        log.info("GET /v1/admin/profiles/code/{}", profileCode);
+        log.info("GET /apiv1/admin/profiles/code/{}", profileCode);
         MasterProfileResponse response = masterProfileService.getByProfileCode(profileCode);
         return ResponseEntity.ok(MethodResult.success(response));
     }
 
     @PostMapping("/{id}/sync-unomi")
     public ResponseEntity<MethodResult> syncToUnomi(@PathVariable Long id) {
-        log.info("POST /v1/admin/profiles/{}/sync-unomi", id);
+        log.info("POST /api/v1/admin/profiles/{}/sync-unomi", id);
         MasterProfileResponse response = masterProfileService.syncToUnomi(id);
         return ResponseEntity.ok(MethodResult.success(response));
     }
@@ -116,7 +116,7 @@ public class MasterProfileController {
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String sort) {
 
-        log.info("GET /v1/admin/profiles - keyword={}, customerType={}, status={}, page={}, size={}",
+        log.info("GET /api/v1/admin/profiles - keyword={}, customerType={}, status={}, page={}, size={}",
                 keyword, customerType, status, page, size);
 
         ProfileSearchRequest request = new ProfileSearchRequest();
@@ -138,13 +138,67 @@ public class MasterProfileController {
         Pageable pageable = PageRequest.of(page, size, pageSort);
 
         Page<ProfileListItemResponse> result = profileQueryService.searchProfiles(request, pageable);
-        return ResponseEntity.ok(MethodResult.success(result));
+        return ResponseEntity.ok(MethodResult.success(result.getContent(), result.getTotalElements()));
     }
 
-    @GetMapping("/{id}/detail")
+    @GetMapping("/{id}")
     public ResponseEntity<MethodResult> getDetail(@PathVariable Long id) {
-        log.info("GET /v1/admin/profiles/{}/detail", id);
+        log.info("GET /v1/admin/profiles/{}", id);
         ProfileDetailResponse response = profileQueryService.getProfileDetail(id);
         return ResponseEntity.ok(MethodResult.success(response));
+    }
+
+    // =====================================================================
+    // Chi tiết hồ sơ tách theo tab (endpoint tổng hợp /{id} vẫn giữ nguyên)
+    // =====================================================================
+
+    /** Tab 1: Tổng quan. */
+    @GetMapping("/{id}/overview")
+    public ResponseEntity<MethodResult> getOverview(@PathVariable Long id) {
+        log.info("GET /api/v1/admin/profiles/{}/overview", id);
+        return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileOverview(id)));
+    }
+
+    /** Tab 2: Hồ sơ liên kết. */
+    @GetMapping("/{id}/identity-links")
+    public ResponseEntity<MethodResult> getIdentityLinks(@PathVariable Long id) {
+        log.info("GET /api/v1/admin/profiles/{}/identity-links", id);
+        var links = profileQueryService.getProfileIdentityLinks(id);
+        return ResponseEntity.ok(MethodResult.success(links, (long) links.size()));
+    }
+
+    /** Tab 3: Hồ sơ đa nguồn (so sánh field-by-field). */
+    @GetMapping("/{id}/multi-source")
+    public ResponseEntity<MethodResult> getMultiSource(@PathVariable Long id) {
+        log.info("GET /api/v1/admin/profiles/{}/multi-source", id);
+        return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileMultiSource(id)));
+    }
+
+    /** Tab 4: Địa chỉ (dữ liệu hiện có; địa chỉ chi tiết chờ spec). */
+    @GetMapping("/{id}/address")
+    public ResponseEntity<MethodResult> getAddress(@PathVariable Long id) {
+        log.info("GET /api/v1/admin/profiles/{}/address", id);
+        return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileAddress(id)));
+    }
+
+    /** Tab 6: Hành vi số (Unomi). */
+    @GetMapping("/{id}/behavior")
+    public ResponseEntity<MethodResult> getBehavior(@PathVariable Long id) {
+        log.info("GET /api/v1/admin/profiles/{}/behavior", id);
+        return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileBehavior(id)));
+    }
+
+    /** Tab 10: Nhật ký (change logs + lần sync Unomi gần nhất). */
+    @GetMapping("/{id}/change-logs")
+    public ResponseEntity<MethodResult> getChangeLogs(@PathVariable Long id) {
+        log.info("GET /api/v1/admin/profiles/{}/change-logs", id);
+        return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileChangeLogs(id)));
+    }
+
+    /** Summary card: tổng hợp nhanh thông tin profile (fullName, uid, tags, activeSystems…). */
+    @GetMapping("/{id}/summary")
+    public ResponseEntity<MethodResult> getProfileSummary(@PathVariable Long id) {
+        log.info("GET /api/v1/admin/profiles/{}/summary", id);
+        return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileSummary(id)));
     }
 }
