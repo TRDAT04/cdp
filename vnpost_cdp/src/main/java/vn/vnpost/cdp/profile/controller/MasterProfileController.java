@@ -107,24 +107,28 @@ public class MasterProfileController {
     public ResponseEntity<MethodResult> searchProfiles(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String customerType,
+            @RequestParam(required = false) String customerGroup,
             @RequestParam(required = false) Short status,
             @RequestParam(required = false) String warningStatus,
             @RequestParam(required = false) String sourceSystem,
+            @RequestParam(required = false) String segment,
             @RequestParam(required = false) String fromLastActivityAt,
             @RequestParam(required = false) String toLastActivityAt,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String sort) {
 
-        log.info("GET /api/v1/admin/profiles - keyword={}, customerType={}, status={}, page={}, size={}",
-                keyword, customerType, status, page, size);
+        log.info("GET /api/v1/admin/profiles - keyword={}, customerType={}, customerGroup={}, status={}, segment={}, page={}, size={}",
+                keyword, customerType, customerGroup, status, segment, page, size);
 
         ProfileSearchRequest request = new ProfileSearchRequest();
         request.setKeyword(keyword);
         request.setCustomerType(customerType);
+        request.setCustomerGroup(customerGroup);
         request.setStatus(status);
         request.setWarningStatus(warningStatus);
         request.setSourceSystem(sourceSystem);
+        request.setSegment(segment);
         if (StringUtils.hasText(fromLastActivityAt)) {
             request.setFromLastActivityAt(LocalDate.parse(fromLastActivityAt));
         }

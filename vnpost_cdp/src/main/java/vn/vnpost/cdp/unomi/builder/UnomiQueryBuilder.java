@@ -10,6 +10,28 @@ import java.util.Map;
 public class UnomiQueryBuilder {
 
     private static final String PROFILE_CODE = "properties.cdpProfileCode";
+    private static final String SEGMENTS = "segments";
+
+    /**
+     * Query tìm các profile thuộc một segment. Property {@code segments} là mảng,
+     * Unomi diễn giải {@code equals} trên property dạng mảng là "chứa giá trị".
+     */
+    public UnomiProfileSearchRequest buildSearchBySegment(String segmentId, int limit) {
+        return UnomiProfileSearchRequest.builder()
+                .condition(
+                        UnomiCondition.builder()
+                                .type("profilePropertyCondition")
+                                .parameterValues(Map.of(
+                                        "propertyName", SEGMENTS,
+                                        "comparisonOperator", "equals",
+                                        "propertyValue", segmentId
+                                ))
+                                .build()
+                )
+                .offset(0)
+                .limit(limit)
+                .build();
+    }
 
     public UnomiProfileSearchRequest buildSearchByProfileCodes(List<String> profileCodes) {
 

@@ -14,6 +14,9 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class UnomiSegmentServiceImpl implements UnomiSegmentService {
 
+    /** Giữ nguyên hành vi cũ của endpoint /members (trước đây hardcode limit=20). */
+    private static final int DEFAULT_MEMBER_LIMIT = 20;
+
     private final UnomiClient unomiClient;
 
     @Override
@@ -26,6 +29,6 @@ public class UnomiSegmentServiceImpl implements UnomiSegmentService {
     }
     @Override
     public Object getSegmentMembers(String segmentId) {
-        return unomiClient.getSegmentMembers(segmentId).block();
+        return unomiClient.getSegmentMembers(segmentId, DEFAULT_MEMBER_LIMIT).block();
     }
 }

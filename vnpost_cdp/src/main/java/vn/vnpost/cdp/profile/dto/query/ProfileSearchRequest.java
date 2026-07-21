@@ -10,9 +10,11 @@ import java.time.LocalDate;
 public class ProfileSearchRequest {
     private String keyword;
     private String customerType;
+    private String customerGroup;
     private Short status;
     private String warningStatus;
     private String sourceSystem;
+    private String segment;
     private LocalDate fromLastActivityAt;
     private LocalDate toLastActivityAt;
     private int page = 0;

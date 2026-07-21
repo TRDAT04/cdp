@@ -208,25 +208,36 @@ public class UnomiClient {
                 .retrieve()
                 .bodyToMono(UnomiSegmentDetailResponse.class);
     }
-    public Mono<Object> getSegmentMembers(String segmentId) {
+    public Mono<UnomiProfileSearchResponse> getSegmentMembers(String segmentId, int limit) {
+        if (segmentId == null || segmentId.isBlank()) {
+            return Mono.just(
+                    UnomiProfileSearchResponse.builder()
+                            .list(Collections.emptyList())
+                            .build()
+            );
+        }
 
-        var request = Map.of(
-                "condition", Map.of(
-                        "type", "profilePropertyCondition",
-                        "parameterValues", Map.of(
-                                "propertyName", "segments",
-                                "comparisonOperator", "equals",
-                                "propertyValue", segmentId
-                        )
-                ),
-                "offset", 0,
-                "limit", 20
-        );
+        log.debug("UnomiClient - getSegmentMembers: segmentId={}, limit={}", segmentId, limit);
+        UnomiProfileSearchRequest request = unomiQueryBuilder.buildSearchBySegment(segmentId, limit);
 
         return unomiWebClient.post()
                 .uri("/cxs/profiles/search")
                 .bodyValue(request)
                 .retrieve()
-                .bodyToMono(Object.class);
+                .bodyToMono(UnomiProfileSearchResponse.class)
+                .doOnSuccess(res -> log.debug(
+                        "UnomiClient - getSegmentMembers success: segmentId={}, returned={}",
+                        segmentId,
+                        res != null && res.getList() != null ? res.getList().size() : 0))
+                .onErrorResume(ex -> {
+                    log.warn("UnomiClient - getSegmentMembers failed, will degrade gracefully. segmentId={}, error={}",
+                            segmentId, ex.getMessage());
+
+                    return Mono.just(
+                            UnomiProfileSearchResponse.builder()
+                                    .list(Collections.emptyList())
+                                    .build()
+                    );
+                });
     }
 }

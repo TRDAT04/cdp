@@ -219,6 +219,12 @@ public class ProfileDetailAssembler {
                     .text(mapCustomerTypeText(profile.getCustomerType()))
                     .build());
         }
+        if (profile.getCustomerGroup() != null) {
+            tags.add(TagItem.builder()
+                    .code(profile.getCustomerGroup())
+                    .text(mapCustomerGroupText(profile.getCustomerGroup()))
+                    .build());
+        }
         if (profile.getStatus() != null) {
             String statusCode = switch (profile.getStatus()) {
                 case 1 -> "ACTIVE";
@@ -589,6 +595,10 @@ public class ProfileDetailAssembler {
                 .build();
     }
 
+    private String mapCustomerGroupText(String customerGroup) {
+        if (customerGroup == null) return null;
+        return customerGroup; // hiển thị đúng như dữ liệu nguồn, không cần dịch
+    }
     private String mapStatusText(Short status) {
         if (status == null) return null;
         return switch (status) {

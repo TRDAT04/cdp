@@ -29,6 +29,12 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class ProfileQueryServiceImpl implements ProfileQueryService {
 
+    /**
+     * Giới hạn số member kéo về từ Unomi khi lọc theo segment. Segment lớn hơn ngưỡng này
+     * sẽ bị cắt bớt (log.warn), kết quả lọc có thể sót — cân nhắc lưu segment vào DB nếu gặp.
+     */
+    private static final int SEGMENT_MEMBER_FETCH_LIMIT = 5000;
+
     private final MasterProfileRepository masterProfileRepository;
     private final ProfileIdentityLinkRepository identityLinkRepository;
     private final ProfileAttributeValueRepository attributeValueRepository;
@@ -184,7 +190,11 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
 
     @Override
     public Page<ProfileListItemResponse> searchProfiles(ProfileSearchRequest request, Pageable pageable) {
-        Specification<MasterProfile> spec = buildSpec(request);
+        // Segment sống ở Unomi (không có trong DB): quy về danh sách profileCode để DB giao với các filter khác.
+        // null  = không lọc segment; empty = có lọc nhưng segment không có thành viên -> trả 0 kết quả.
+        List<String> segmentProfileCodes = resolveSegmentProfileCodes(request.getSegment());
+
+        Specification<MasterProfile> spec = buildSpec(request, segmentProfileCodes);
         Page<MasterProfile> profilePage = masterProfileRepository.findAll(spec, pageable);
 
         List<String> profileCodes = profilePage.getContent().stream()
@@ -212,7 +222,7 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
         });
     }
 
-    private Specification<MasterProfile> buildSpec(ProfileSearchRequest request) {
+    private Specification<MasterProfile> buildSpec(ProfileSearchRequest request, List<String> segmentProfileCodes) {
         return (root, query, cb) -> {
             var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
 
@@ -237,6 +247,21 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
                 predicates.add(cb.equal(root.get("customerType"), request.getCustomerType()));
             }
 
+            if (StringUtils.hasText(request.getCustomerGroup())) {
+                predicates.add(cb.equal(root.get("customerGroup"), request.getCustomerGroup()));
+            }
+
+            // Lọc theo segment: segmentProfileCodes đã được resolve từ Unomi trước đó.
+            // null  -> không áp dụng filter segment.
+            // empty -> có filter nhưng không member nào -> match nothing (0 kết quả).
+            if (segmentProfileCodes != null) {
+                if (segmentProfileCodes.isEmpty()) {
+                    predicates.add(cb.disjunction());
+                } else {
+                    predicates.add(root.get("profileCode").in(segmentProfileCodes));
+                }
+            }
+
             if (StringUtils.hasText(request.getSourceSystem())) {
                 // Subquery: profile must have an active identity link for this source system
                 var sub = query.subquery(Long.class);
@@ -251,6 +276,40 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
 
             return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
         };
+    }
+
+    /**
+     * Lấy danh sách profileCode thuộc một segment từ Unomi.
+     *
+     * @return {@code null} nếu không lọc segment; danh sách (có thể rỗng) profileCode nếu có lọc.
+     */
+    private List<String> resolveSegmentProfileCodes(String segment) {
+        if (!StringUtils.hasText(segment)) {
+            return null;
+        }
+
+        UnomiProfileSearchResponse response = unomiClient
+                .getSegmentMembers(segment, SEGMENT_MEMBER_FETCH_LIMIT)
+                .block();
+
+        List<UnomiProfileResponse> members = (response == null || response.getList() == null)
+                ? Collections.emptyList()
+                : response.getList();
+
+        if (members.size() >= SEGMENT_MEMBER_FETCH_LIMIT) {
+            log.warn("Segment '{}' có số thành viên đạt/vượt ngưỡng {} — kết quả lọc có thể bị sót.",
+                    segment, SEGMENT_MEMBER_FETCH_LIMIT);
+        }
+
+        List<String> codes = members.stream()
+                .map(p -> p.getProperties() != null ? p.getProperties().getCdpProfileCode() : null)
+                .filter(StringUtils::hasText)
+                .distinct()
+                .collect(Collectors.toList());
+
+        log.debug("resolveSegmentProfileCodes - segment={}, members={}, distinctCodes={}",
+                segment, members.size(), codes.size());
+        return codes;
     }
 
 
