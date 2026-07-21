@@ -8,10 +8,17 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Tab "Hành vi số". Dữ liệu hành vi lấy từ Apache Unomi.
+ * Tab "Hành vi số".
+ * <p>
+ * Dữ liệu đến từ 2 nguồn:
+ * <ul>
+ *   <li>Apache Unomi — số liệu tổng hợp (visit, purchase, spent).</li>
+ *   <li>{@code customer_events} — hành vi chi tiết (đăng nhập, đơn hàng, timeline).</li>
+ * </ul>
  */
 @Getter
 @Setter
@@ -20,6 +27,7 @@ import java.util.List;
 @AllArgsConstructor
 public class ProfileDigitalBehaviorResponse {
 
+    // ---- Tổng hợp từ Unomi ----
     private List<String> segments;
 
     private Instant firstVisit;
@@ -30,4 +38,56 @@ public class ProfileDigitalBehaviorResponse {
     private Integer purchaseCount;
     private BigDecimal totalSpent;
     private Instant lastTransactionDate;
+
+    // ---- Suy diễn từ customer_events ----
+
+    /** Lần đăng nhập gần nhất (event {@code customerLogin}). */
+    private LocalDateTime lastLoginAt;
+
+    /** Thiết bị đăng nhập gần nhất — để trống tới khi chốt nguồn dữ liệu. */
+    private String device;
+
+    /** Số phiên trong 30 ngày — để trống tới khi chốt công thức. */
+    private Integer sessionsLast30Days;
+
+    /** Điểm gắn kết — để trống tới khi chốt công thức. */
+    private Integer engagementScore;
+
+    /** Các kênh/hệ thống đã phát sinh tương tác (distinct sourceSystem). */
+    private List<String> channelsInteracted;
+
+    /** Đơn hàng gần nhất (event {@code createOrder}). */
+    private RecentOrder recentOrder;
+
+    /** Dòng thời gian các event gần đây (mới nhất trước). */
+    private List<TimelineItem> timeline;
+
+    // ----------------------------------------------------------------
+
+    @Getter
+    @Setter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class RecentOrder {
+        private String orderId;
+        private BigDecimal amount;
+        private String serviceCode;
+        private String orderStatus;
+        private LocalDateTime occurredAt;
+    }
+
+    @Getter
+    @Setter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class TimelineItem {
+        private String eventType;
+        private String eventTypeText;
+        private String sourceSystem;
+        private LocalDateTime occurredAt;
+        /** Mô tả ngắn (vd: mã đơn / số tiền) nếu suy diễn được từ properties. */
+        private String summary;
+    }
 }

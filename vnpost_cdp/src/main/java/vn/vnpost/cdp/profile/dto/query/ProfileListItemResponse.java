@@ -35,6 +35,10 @@ public class ProfileListItemResponse {
     private Short status;
     private String statusText;
 
+    /** Mảng dịch vụ chính (serviceCode distinct từ createOrder). */
+    @Builder.Default
+    private List<String> serviceLines = Collections.emptyList();
+
     // ---- Dữ liệu hành vi từ Apache Unomi ----
 
 

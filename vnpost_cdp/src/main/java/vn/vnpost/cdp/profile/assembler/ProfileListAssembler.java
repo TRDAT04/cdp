@@ -3,6 +3,7 @@ package vn.vnpost.cdp.profile.assembler;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
+import vn.vnpost.cdp.customer_event.entity.CustomerEvent;
 import vn.vnpost.cdp.profile.dto.query.ProfileListItemResponse;
 import vn.vnpost.cdp.profile.entity.MasterProfile;
 import vn.vnpost.cdp.unomi.dto.UnomiProfileProperties;
@@ -19,6 +20,8 @@ import java.util.stream.Collectors;
 @Component
 public class ProfileListAssembler {
 
+    /** Số dịch vụ chính tối đa hiển thị trên mỗi dòng danh sách. */
+    private static final int SERVICE_LINE_LIMIT = 5;
 
     public Map<String, UnomiProfileResponse> buildUnomiIndex(List<UnomiProfileResponse> unomiProfiles) {
         if (CollectionUtils.isEmpty(unomiProfiles)) {
@@ -40,7 +43,8 @@ public class ProfileListAssembler {
             UnomiProfileResponse unomiData,
             String[] warning,
             List<String> sourceSystems,
-            LocalDateTime lastActivityAt) {
+            LocalDateTime lastActivityAt,
+            List<CustomerEvent> events) {
 
         ProfileListItemResponse.ProfileListItemResponseBuilder builder = ProfileListItemResponse.builder()
                 // ---- Dữ liệu từ PostgreSQL ----
@@ -58,7 +62,8 @@ public class ProfileListAssembler {
                 .sourceSystems(sourceSystems)
                 .lastActivityAt(lastActivityAt)
                 .status(profile.getStatus())
-                .statusText(mapStatusText(profile.getStatus()));
+                .statusText(mapStatusText(profile.getStatus()))
+                .serviceLines(CustomerEventDerivations.resolveTopServiceLines(events, SERVICE_LINE_LIMIT));
 
         // ---- Dữ liệu hành vi từ Unomi (graceful degradation nếu null) ----
         if (unomiData != null) {

@@ -2,6 +2,7 @@ package vn.vnpost.cdp.profile.assembler;
 
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
+import vn.vnpost.cdp.customer_event.entity.CustomerEvent;
 import vn.vnpost.cdp.profile.dto.query.*;
 import vn.vnpost.cdp.profile.dto.query.ProfileSummaryResponse.LastInteraction;
 import vn.vnpost.cdp.profile.dto.query.ProfileSummaryResponse.TagItem;
@@ -22,6 +23,9 @@ import java.util.stream.Collectors;
 
 @Component
 public class ProfileDetailAssembler {
+
+    /** Số dịch vụ chính tối đa hiển thị trên summary/list. */
+    private static final int SERVICE_LINE_LIMIT = 5;
 
     /** Nhãn tiếng Việt cho các propertyName phổ biến (dùng cho tab Hồ sơ đa nguồn). */
     private static final Map<String, String> PROPERTY_LABELS = Map.ofEntries(
@@ -149,11 +153,13 @@ public class ProfileDetailAssembler {
      * @param profile    bản ghi MasterProfile
      * @param unomiData  dữ liệu Unomi (nullable – graceful degradation)
      * @param links      danh sách identity links (để lấy activeSystems + channel)
+     * @param events     customer_events (nullable) — để suy ra mảng dịch vụ chính
      */
     public ProfileSummaryResponse assembleSummary(
             MasterProfile profile,
             UnomiProfileResponse unomiData,
-            List<ProfileIdentityLink> links) {
+            List<ProfileIdentityLink> links,
+            List<CustomerEvent> events) {
 
         // --- uid: lấy profileCode, format UID-xxxx nếu thuần số ---
         String uid = formatUid(profile.getProfileCode());
@@ -190,7 +196,7 @@ public class ProfileDetailAssembler {
                 .fullName(profile.getFullName())
                 .uid(uid)
                 .tags(tags)
-                .serviceLines(Collections.emptyList())
+                .serviceLines(CustomerEventDerivations.resolveTopServiceLines(events, SERVICE_LINE_LIMIT))
                 .activeSystems(activeSystems)
                 .lastInteraction(lastInteraction)
                 .totalOrders(totalOrders)
@@ -422,12 +428,21 @@ public class ProfileDetailAssembler {
     }
 
     // =====================================================================
-    // TAB 6: HÀNH VI SỐ (Unomi)
+    // TAB 6: HÀNH VI SỐ (Unomi + customer_events)
     // =====================================================================
-    public ProfileDigitalBehaviorResponse assembleBehavior(UnomiProfileResponse unomiData) {
+
+    /**
+     * @param unomiData dữ liệu tổng hợp từ Unomi (nullable)
+     * @param events    customer_events của profile, đã sort mới nhất trước (nullable)
+     */
+    public ProfileDigitalBehaviorResponse assembleBehavior(
+            UnomiProfileResponse unomiData, List<CustomerEvent> events) {
+
         ProfileDigitalBehaviorResponse.ProfileDigitalBehaviorResponseBuilder builder =
                 ProfileDigitalBehaviorResponse.builder()
-                        .segments(Collections.emptyList());
+                        .segments(Collections.emptyList())
+                        .channelsInteracted(Collections.emptyList())
+                        .timeline(Collections.emptyList());
 
         if (unomiData != null) {
             builder.segments(CollectionUtils.isEmpty(unomiData.getSegments())
@@ -445,7 +460,107 @@ public class ProfileDetailAssembler {
                         .lastTransactionDate(props.getLastTransactionDate());
             }
         }
+
+        if (!CollectionUtils.isEmpty(events)) {
+            // events đã sort occurredAt DESC -> phần tử đầu tiên khớp là mới nhất
+            CustomerEvent lastLogin = latestEvent(events, CustomerEventDerivations.EVENT_LOGIN);
+            if (lastLogin != null) {
+                builder.lastLoginAt(lastLogin.getOccurredAt())
+                        .device(CustomerEventDerivations.asString(
+                                lastLogin.getProperties(), CustomerEventDerivations.PROP_DEVICE));
+            }
+            builder.channelsInteracted(resolveChannels(events))
+                    .sessionsLast30Days(resolveSessionsLast30Days(events))
+                    .recentOrder(resolveRecentOrder(events))
+                    .timeline(buildTimeline(events));
+            // engagementScore: để trống (chưa chốt công thức)
+        }
+
         return builder.build();
+    }
+
+    /** Event {@code eventType} mới nhất (events đã sort occurredAt DESC). */
+    private CustomerEvent latestEvent(List<CustomerEvent> events, String eventType) {
+        return events.stream()
+                .filter(e -> eventType.equals(e.getEventType()) && e.getOccurredAt() != null)
+                .findFirst()
+                .orElse(null);
+    }
+
+    /** Số phiên (sessionId distinct) trong 30 ngày gần nhất tính từ thời điểm hiện tại. */
+    private Integer resolveSessionsLast30Days(List<CustomerEvent> events) {
+        LocalDateTime threshold = LocalDateTime.now().minusDays(30);
+        long count = events.stream()
+                .filter(e -> e.getOccurredAt() != null && !e.getOccurredAt().isBefore(threshold))
+                .map(CustomerEvent::getSessionId)
+                .filter(s -> s != null && !s.isBlank())
+                .distinct()
+                .count();
+        return (int) count;
+    }
+
+    /** distinct sourceSystem, giữ thứ tự xuất hiện (mới nhất trước). */
+    private List<String> resolveChannels(List<CustomerEvent> events) {
+        return events.stream()
+                .map(CustomerEvent::getSourceSystem)
+                .filter(s -> s != null && !s.isBlank())
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
+    private ProfileDigitalBehaviorResponse.RecentOrder resolveRecentOrder(List<CustomerEvent> events) {
+        return events.stream()
+                .filter(e -> CustomerEventDerivations.EVENT_CREATE_ORDER.equals(e.getEventType()))
+                .findFirst()
+                .map(e -> {
+                    Map<String, Object> p = e.getProperties();
+                    return ProfileDigitalBehaviorResponse.RecentOrder.builder()
+                            .orderId(CustomerEventDerivations.asString(p, CustomerEventDerivations.PROP_ORDER_ID))
+                            .amount(CustomerEventDerivations.asBigDecimal(p, CustomerEventDerivations.PROP_AMOUNT))
+                            .serviceCode(CustomerEventDerivations.asString(p, CustomerEventDerivations.PROP_SERVICE_CODE))
+                            .orderStatus(CustomerEventDerivations.asString(p, CustomerEventDerivations.PROP_ORDER_STATUS))
+                            .occurredAt(e.getOccurredAt())
+                            .build();
+                })
+                .orElse(null);
+    }
+
+    private List<ProfileDigitalBehaviorResponse.TimelineItem> buildTimeline(List<CustomerEvent> events) {
+        return events.stream()
+                .map(e -> ProfileDigitalBehaviorResponse.TimelineItem.builder()
+                        .eventType(e.getEventType())
+                        .eventTypeText(mapEventTypeText(e.getEventType()))
+                        .sourceSystem(e.getSourceSystem())
+                        .occurredAt(e.getOccurredAt())
+                        .summary(buildEventSummary(e))
+                        .build())
+                .collect(Collectors.toList());
+    }
+
+    /** Mô tả ngắn cho timeline: đơn hàng hiển thị mã + số tiền, còn lại để null. */
+    private String buildEventSummary(CustomerEvent e) {
+        if (CustomerEventDerivations.EVENT_CREATE_ORDER.equals(e.getEventType())) {
+            String orderId = CustomerEventDerivations.asString(e.getProperties(), CustomerEventDerivations.PROP_ORDER_ID);
+            java.math.BigDecimal amount =
+                    CustomerEventDerivations.asBigDecimal(e.getProperties(), CustomerEventDerivations.PROP_AMOUNT);
+            if (orderId != null && amount != null) {
+                return "Đơn " + orderId + " - " + amount.toPlainString();
+            }
+            if (orderId != null) {
+                return "Đơn " + orderId;
+            }
+        }
+        return null;
+    }
+
+    private String mapEventTypeText(String eventType) {
+        if (eventType == null) return null;
+        return switch (eventType) {
+            case CustomerEventDerivations.EVENT_LOGIN -> "Đăng nhập";
+            case CustomerEventDerivations.EVENT_CREATE_ORDER -> "Tạo đơn hàng";
+            case "view" -> "Xem trang";
+            default -> eventType;
+        };
     }
 
     // =====================================================================

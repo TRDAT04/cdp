@@ -8,6 +8,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import vn.vnpost.cdp.common.exception.BusinessException;
+import vn.vnpost.cdp.customer_event.entity.CustomerEvent;
+import vn.vnpost.cdp.customer_event.repository.CustomerEventRepository;
 import vn.vnpost.cdp.profile.assembler.ProfileListAssembler;
 import vn.vnpost.cdp.profile.dto.query.*;
 import vn.vnpost.cdp.profile.entity.*;
@@ -46,6 +48,7 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
     private final UnomiClient unomiClient;
     private final ProfileListAssembler profileListAssembler;
     private final vn.vnpost.cdp.profile.assembler.ProfileDetailAssembler profileDetailAssembler;
+    private final CustomerEventRepository customerEventRepository;
 
     public ProfileQueryServiceImpl(
             MasterProfileRepository masterProfileRepository,
@@ -58,7 +61,8 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
             ProfileUnomiSyncLogRepository unomiSyncLogRepository,
             UnomiClient unomiClient,
             ProfileListAssembler profileListAssembler,
-            vn.vnpost.cdp.profile.assembler.ProfileDetailAssembler profileDetailAssembler) {
+            vn.vnpost.cdp.profile.assembler.ProfileDetailAssembler profileDetailAssembler,
+            CustomerEventRepository customerEventRepository) {
         this.masterProfileRepository = masterProfileRepository;
         this.identityLinkRepository = identityLinkRepository;
         this.attributeValueRepository = attributeValueRepository;
@@ -70,6 +74,7 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
         this.unomiClient = unomiClient;
         this.profileListAssembler = profileListAssembler;
         this.profileDetailAssembler = profileDetailAssembler;
+        this.customerEventRepository = customerEventRepository;
     }
 
     // =====================================================================
@@ -141,7 +146,9 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
     public ProfileDigitalBehaviorResponse getProfileBehavior(Long id) {
         MasterProfile profile = findProfileOrThrow(id);
         UnomiProfileResponse unomiData = fetchUnomiData(profile);
-        return profileDetailAssembler.assembleBehavior(unomiData);
+        List<CustomerEvent> events = customerEventRepository
+                .findTop50ByMasterProfileIdOrderByOccurredAtDesc(profile.getId());
+        return profileDetailAssembler.assembleBehavior(unomiData, events);
     }
 
     @Override
@@ -159,7 +166,9 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
         MasterProfile profile = findProfileOrThrow(id);
         List<ProfileIdentityLink> links = identityLinkRepository.findByMasterProfileIdAndStatus(profile.getId(), (short) 1);
         UnomiProfileResponse unomiData = fetchUnomiData(profile);
-        return profileDetailAssembler.assembleSummary(profile, unomiData, links);
+        List<CustomerEvent> events = customerEventRepository
+                .findTop50ByMasterProfileIdOrderByOccurredAtDesc(profile.getId());
+        return profileDetailAssembler.assembleSummary(profile, unomiData, links, events);
     }
 
     // =====================================================================
@@ -209,6 +218,17 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
         Map<String, UnomiProfileResponse> unomiIndex =
                 profileListAssembler.buildUnomiIndex(unomiResponse.getList());
 
+        // Batch fetch customer_events cho toàn bộ trang trong một query, group theo masterProfileId
+        // (tránh N+1). Mỗi list vẫn giữ thứ tự occurredAt DESC do repository đã sort.
+        List<Long> profileIds = profilePage.getContent().stream()
+                .map(MasterProfile::getId)
+                .collect(Collectors.toList());
+        Map<Long, List<CustomerEvent>> eventsByProfileId = profileIds.isEmpty()
+                ? Collections.emptyMap()
+                : customerEventRepository.findByMasterProfileIdInOrderByOccurredAtDesc(profileIds).stream()
+                        .filter(e -> e.getMasterProfileId() != null)
+                        .collect(Collectors.groupingBy(CustomerEvent::getMasterProfileId));
+
         final Map<String, UnomiProfileResponse> finalIndex = unomiIndex;
         return profilePage.map(profile -> {
             List<ProfileIdentityLink> links = identityLinkRepository
@@ -217,8 +237,10 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
             String[] warning = resolveWarning(profile.getId());
             LocalDateTime lastActivityAt = resolveLastActivity(profile.getId(), profile, null);
             UnomiProfileResponse unomiData = finalIndex.get(profile.getProfileCode());
+            List<CustomerEvent> events = eventsByProfileId
+                    .getOrDefault(profile.getId(), Collections.emptyList());
 
-            return profileListAssembler.assemble(profile, unomiData, warning, sourceSystems, lastActivityAt);
+            return profileListAssembler.assemble(profile, unomiData, warning, sourceSystems, lastActivityAt, events);
         });
     }
 
