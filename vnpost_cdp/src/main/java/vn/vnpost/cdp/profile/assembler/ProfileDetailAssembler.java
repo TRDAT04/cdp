@@ -20,10 +20,12 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeSet;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Component
@@ -31,22 +33,6 @@ public class ProfileDetailAssembler {
 
     /** Số dịch vụ chính tối đa hiển thị trên summary/list. */
     private static final int SERVICE_LINE_LIMIT = 5;
-
-    /** Nhãn tiếng Việt cho các propertyName phổ biến (dùng cho tab Hồ sơ đa nguồn). */
-    private static final Map<String, String> PROPERTY_LABELS = Map.ofEntries(
-            Map.entry("fullName", "Họ tên"),
-            Map.entry("phone", "SĐT"),
-            Map.entry("email", "Email"),
-            Map.entry("identityNo", "CCCD"),
-            Map.entry("taxCode", "MST"),
-            Map.entry("gender", "Giới tính"),
-            Map.entry("dateOfBirth", "Ngày sinh"),
-            Map.entry("customerType", "Loại khách hàng"),
-            Map.entry("provinceCode", "Mã tỉnh/TP"),
-            Map.entry("provinceName", "Tỉnh/TP"),
-            Map.entry("unitCode", "Mã bưu cục"),
-            Map.entry("unitName", "Bưu cục")
-    );
 
     public ProfileDetailResponse assemble(
             MasterProfile profile,
@@ -152,6 +138,21 @@ public class ProfileDetailAssembler {
                 .unitCode(profile.getUnitCode())
                 .unitName(profile.getUnitName())
                 .segments(segments)
+                // Placeholder: chưa có logic tính vai trò giao dịch (chờ sender/receiver ở event createOrder).
+                .transactionRoles(buildTransactionRolesPlaceholder())
+                .build();
+    }
+
+    /**
+     * Placeholder cho "Vai trò giao dịch" — trả về object rỗng để FE ghép giao diện.
+     * TODO: thay bằng logic thật sau khi event createOrder có field sender/receiver.
+     */
+    private TransactionRolesResponse buildTransactionRolesPlaceholder() {
+        return TransactionRolesResponse.builder()
+                .primaryRole(null)
+                .roles(Collections.emptyList())
+                .senderCount(null)
+                .receiverCount(null)
                 .build();
     }
 
@@ -315,26 +316,140 @@ public class ProfileDetailAssembler {
             List.of("CAS", "MYVNPOST", "CRM", "POSTID", "PNS");
 
     // =====================================================================
-    // TAB 3: HỒ SƠ ĐA NGUỒN (pivot attribute values)
+    // TAB 3: HỒ SƠ ĐA NGUỒN (pivot attribute values + identity links)
     // =====================================================================
-    public ProfileMultiSourceComparisonResponse assembleMultiSource(
-            MasterProfile profile, List<ProfileAttributeValue> attrs) {
 
-        if (CollectionUtils.isEmpty(attrs)) {
-            return ProfileMultiSourceComparisonResponse.builder()
-                    .sources(Collections.emptyList())
-                    .rows(Collections.emptyList())
-                    .build();
+    /** Thứ tự hiển thị nguồn trên tab Hồ sơ đa nguồn (theo mockup FE). */
+    private static final List<String> MULTI_SOURCE_ORDER =
+            List.of("CAS", "CRM", "MYVNPOST", "POSTID", "PNS_DINGDONG", "PAYPOST");
+
+    public ProfileMultiSourceComparisonResponse assembleMultiSource(
+            MasterProfile profile,
+            List<ProfileAttributeValue> attrs,
+            List<ProfileIdentityLink> links,
+            List<ProfileSourceRecord> records) {
+
+        // --- Cột nguồn: chỉ những nguồn profile thực sự có dữ liệu (loại nguồn trống) ---
+        List<ProfileMultiSourceComparisonResponse.SourceInfo> sources =
+                buildSourceInfos(attrs, links, records);
+        List<String> sourceCodes = sources.stream()
+                .map(ProfileMultiSourceComparisonResponse.SourceInfo::getCode)
+                .collect(Collectors.toList());
+
+        // --- Pivot attribute values -> (rawBySource, masterValue) theo từng propertyName ---
+        Map<String, Map<String, String>> rawByProp = new LinkedHashMap<>();
+        Map<String, String> masterByProp = new HashMap<>();
+        if (!CollectionUtils.isEmpty(attrs)) {
+            pivotAttrs(attrs, rawByProp, masterByProp);
         }
 
-        // Cột nguồn: distinct sourceSystem, sắp xếp ổn định
-        TreeSet<String> sourceSet = attrs.stream()
-                .map(ProfileAttributeValue::getSourceSystem)
-                .filter(s -> s != null && !s.isBlank())
-                .collect(Collectors.toCollection(TreeSet::new));
-        List<String> sources = new ArrayList<>(sourceSet);
+        // --- Nhóm ĐỊNH DANH ---
+        List<ProfileMultiSourceComparisonResponse.Row> identityRows = new ArrayList<>();
+        identityRows.add(buildRow("fullName", "Họ tên", masterByProp.get("fullName"),
+                rawByProp.getOrDefault("fullName", Map.of()), sourceCodes));
+        identityRows.add(buildRow("phone", "SĐT", masterByProp.get("phone"),
+                rawByProp.getOrDefault("phone", Map.of()), sourceCodes));
+        identityRows.add(buildRow("email", "Email", masterByProp.get("email"),
+                rawByProp.getOrDefault("email", Map.of()), sourceCodes));
+        // Row gộp CCCD (cá nhân) / MST (doanh nghiệp) — ưu tiên CCCD (đã che), fallback MST
+        identityRows.add(buildIdentityNoOrTaxRow(profile, rawByProp, sourceCodes));
+        identityRows.add(buildRow("gender", "Giới tính", masterByProp.get("gender"),
+                rawByProp.getOrDefault("gender", Map.of()), sourceCodes));
+        identityRows.add(buildRow("dateOfBirth", "Ngày sinh", masterByProp.get("dateOfBirth"),
+                rawByProp.getOrDefault("dateOfBirth", Map.of()), sourceCodes));
+        // PostID lấy theo từng nguồn từ profile_identity_links (identity_type = POST_ID)
+        identityRows.add(buildRow("postId", "PostID", resolvePostId(links),
+                buildPostIdBySource(links), sourceCodes));
 
-        // Group theo propertyName, giữ thứ tự xuất hiện
+        // --- Nhóm TÀI CHÍNH/HỢP ĐỒNG ---
+        List<ProfileMultiSourceComparisonResponse.Row> financeRows = new ArrayList<>();
+        // Mã số thuế: lấy giá trị thật từ master_profiles.tax_code (null nếu chưa có)
+        financeRows.add(buildRow("taxCode", "Mã số thuế", profile.getTaxCode(),
+                rawByProp.getOrDefault("taxCode", Map.of()), sourceCodes));
+        // TODO: contract (Hợp đồng) chưa xác định nguồn dữ liệu — để null cho mọi nguồn, chờ tích hợp sau.
+        financeRows.add(buildRow("contract", "Hợp đồng", null, Map.of(), sourceCodes));
+        // TODO: debt (Công nợ) chưa xác định nguồn dữ liệu — để null cho mọi nguồn, chờ tích hợp sau.
+        financeRows.add(buildRow("debt", "Công nợ", null, Map.of(), sourceCodes));
+
+        List<ProfileMultiSourceComparisonResponse.Group> groups = List.of(
+                ProfileMultiSourceComparisonResponse.Group.builder()
+                        .groupName("ĐỊNH DANH").rows(identityRows).build(),
+                ProfileMultiSourceComparisonResponse.Group.builder()
+                        .groupName("TÀI CHÍNH/HỢP ĐỒNG").rows(financeRows).build());
+
+        return ProfileMultiSourceComparisonResponse.builder()
+                .sources(sources)
+                .groups(groups)
+                .build();
+    }
+
+    /**
+     * Danh sách nguồn (cột) mà profile thực sự có dữ liệu = attrs ∪ links ∪ records,
+     * sắp theo {@link #MULTI_SOURCE_ORDER} (nguồn ngoài danh mục xếp cuối, sort A-Z).
+     * Nguồn không có dữ liệu bị loại (không hiển thị cột trống).
+     * {@code sourceCustomerId} ưu tiên lấy từ source records, fallback identity links.
+     */
+    private List<ProfileMultiSourceComparisonResponse.SourceInfo> buildSourceInfos(
+            List<ProfileAttributeValue> attrs,
+            List<ProfileIdentityLink> links,
+            List<ProfileSourceRecord> records) {
+
+        Map<String, String> customerIdBySource = new LinkedHashMap<>();
+        if (!CollectionUtils.isEmpty(records)) {
+            for (ProfileSourceRecord r : records) {
+                if (StringUtils.hasText(r.getSourceSystem()) && StringUtils.hasText(r.getSourceCustomerId())) {
+                    customerIdBySource.putIfAbsent(r.getSourceSystem(), r.getSourceCustomerId());
+                }
+            }
+        }
+        if (!CollectionUtils.isEmpty(links)) {
+            for (ProfileIdentityLink l : links) {
+                if (StringUtils.hasText(l.getSourceSystem()) && StringUtils.hasText(l.getSourceCustomerId())) {
+                    customerIdBySource.putIfAbsent(l.getSourceSystem(), l.getSourceCustomerId());
+                }
+            }
+        }
+
+        Set<String> present = new LinkedHashSet<>();
+        if (!CollectionUtils.isEmpty(attrs)) {
+            for (ProfileAttributeValue a : attrs) {
+                if (StringUtils.hasText(a.getSourceSystem())) present.add(a.getSourceSystem());
+            }
+        }
+        if (!CollectionUtils.isEmpty(links)) {
+            for (ProfileIdentityLink l : links) {
+                if (StringUtils.hasText(l.getSourceSystem())) present.add(l.getSourceSystem());
+            }
+        }
+        if (!CollectionUtils.isEmpty(records)) {
+            for (ProfileSourceRecord r : records) {
+                if (StringUtils.hasText(r.getSourceSystem())) present.add(r.getSourceSystem());
+            }
+        }
+
+        List<String> ordered = new ArrayList<>();
+        for (String code : MULTI_SOURCE_ORDER) {
+            if (present.remove(code)) ordered.add(code);
+        }
+        // Nguồn ngoài danh mục mockup nhưng có data thật → vẫn giữ (không giấu data)
+        List<String> extras = new ArrayList<>(present);
+        Collections.sort(extras);
+        ordered.addAll(extras);
+
+        List<ProfileMultiSourceComparisonResponse.SourceInfo> result = new ArrayList<>();
+        for (String code : ordered) {
+            result.add(ProfileMultiSourceComparisonResponse.SourceInfo.builder()
+                    .code(code)
+                    .sourceCustomerId(customerIdBySource.get(code))
+                    .build());
+        }
+        return result;
+    }
+
+    /** Pivot attribute values thành rawBySource + masterValue theo từng propertyName. */
+    private void pivotAttrs(List<ProfileAttributeValue> attrs,
+                            Map<String, Map<String, String>> rawByPropOut,
+                            Map<String, String> masterByPropOut) {
         Map<String, List<ProfileAttributeValue>> byProperty = attrs.stream()
                 .filter(a -> a.getPropertyName() != null)
                 .collect(Collectors.groupingBy(
@@ -342,18 +457,13 @@ public class ProfileDetailAssembler {
                         LinkedHashMap::new,
                         Collectors.toList()));
 
-        List<ProfileMultiSourceComparisonResponse.Row> rows = new ArrayList<>();
         for (Map.Entry<String, List<ProfileAttributeValue>> entry : byProperty.entrySet()) {
-            String propertyName = entry.getKey();
             List<ProfileAttributeValue> values = entry.getValue();
-
-            // --- Bước 1: build raw map nguồn -> display value ---
             Map<String, String> rawBySource = new LinkedHashMap<>();
             String masterValue = null;
-
             for (ProfileAttributeValue av : values) {
                 String display = displayValue(av);
-                if (av.getSourceSystem() != null && !av.getSourceSystem().isBlank()) {
+                if (StringUtils.hasText(av.getSourceSystem())) {
                     rawBySource.put(av.getSourceSystem(), display);
                 }
                 // Ưu tiên record được đánh dấu isSelected = true
@@ -361,37 +471,87 @@ public class ProfileDetailAssembler {
                     masterValue = display;
                 }
             }
-
-            // --- Bước 2: fallback masterValue theo thứ tự ưu tiên nguồn ---
             if (masterValue == null) {
                 masterValue = resolveMasterValue(rawBySource, values);
             }
+            rawByPropOut.put(entry.getKey(), rawBySource);
+            masterByPropOut.put(entry.getKey(), masterValue);
+        }
+    }
 
-            // --- Bước 3: build valuesBySource với different per-source ---
-            final String finalMaster = masterValue;
-            Map<String, ProfileMultiSourceComparisonResponse.SourceValue> valuesBySource =
-                    new LinkedHashMap<>();
-            // Đảm bảo tất cả nguồn đã biết đều xuất hiện (kể cả nguồn không có field này)
-            for (String src : sources) {
-                String val = rawBySource.get(src); // null nếu nguồn không có field
-                boolean diff = (val != null) && isDifferent(val, finalMaster);
-                valuesBySource.put(src, ProfileMultiSourceComparisonResponse.SourceValue.builder()
-                        .value(val)
-                        .different(diff)
-                        .build());
+    /**
+     * Row gộp "CCCD/MST": nếu có CCCD (identityNo) → hiển thị CCCD dạng che, nếu không có
+     * CCCD nhưng có MST (taxCode) → hiển thị MST. Áp dụng cho cả masterValue và từng nguồn.
+     */
+    private ProfileMultiSourceComparisonResponse.Row buildIdentityNoOrTaxRow(
+            MasterProfile profile,
+            Map<String, Map<String, String>> rawByProp,
+            List<String> sourceCodes) {
+
+        Map<String, String> idNoRaw = rawByProp.getOrDefault("identityNo", Map.of());
+        Map<String, String> taxRaw = rawByProp.getOrDefault("taxCode", Map.of());
+
+        Map<String, String> merged = new LinkedHashMap<>();
+        for (String code : sourceCodes) {
+            String idNo = idNoRaw.get(code);
+            if (StringUtils.hasText(idNo)) {
+                merged.put(code, maskIdentityNo(idNo));
+            } else if (StringUtils.hasText(taxRaw.get(code))) {
+                merged.put(code, taxRaw.get(code));
             }
-
-            rows.add(ProfileMultiSourceComparisonResponse.Row.builder()
-                    .propertyName(propertyName)
-                    .propertyLabel(PROPERTY_LABELS.getOrDefault(propertyName, propertyName))
-                    .masterValue(masterValue)
-                    .valuesBySource(valuesBySource)
-                    .build());
         }
 
-        return ProfileMultiSourceComparisonResponse.builder()
-                .sources(sources)
-                .rows(rows)
+        String master = StringUtils.hasText(profile.getIdentityNo())
+                ? maskIdentityNo(profile.getIdentityNo())
+                : profile.getTaxCode();
+
+        return buildRow("identityNoOrTaxCode", "CCCD/MST", master, merged, sourceCodes);
+    }
+
+    /**
+     * PostID theo từng nguồn từ {@code profile_identity_links}: link identity_type = POST_ID
+     * → dùng identityValue; fallback link nguồn POSTID (dữ liệu cũ) → identityValue/sourceCustomerId.
+     */
+    private Map<String, String> buildPostIdBySource(List<ProfileIdentityLink> links) {
+        Map<String, String> map = new LinkedHashMap<>();
+        if (CollectionUtils.isEmpty(links)) return map;
+        for (ProfileIdentityLink l : links) {
+            if (!StringUtils.hasText(l.getSourceSystem())) continue;
+            if (l.getStatus() != null && l.getStatus() != 1) continue; // chỉ link ACTIVE
+            String value = null;
+            if (IdentityType.POST_ID.name().equalsIgnoreCase(l.getIdentityType())) {
+                value = l.getIdentityValue();
+            } else if ("POSTID".equalsIgnoreCase(l.getSourceSystem())) {
+                value = StringUtils.hasText(l.getIdentityValue())
+                        ? l.getIdentityValue() : l.getSourceCustomerId();
+            }
+            if (StringUtils.hasText(value)) {
+                map.putIfAbsent(l.getSourceSystem(), value);
+            }
+        }
+        return map;
+    }
+
+    /** Build 1 Row: điền valuesBySource cho mọi nguồn trong sourceCodes (null nếu nguồn thiếu field). */
+    private ProfileMultiSourceComparisonResponse.Row buildRow(
+            String propertyName, String propertyLabel, String masterValue,
+            Map<String, String> rawBySource, List<String> sourceCodes) {
+
+        Map<String, ProfileMultiSourceComparisonResponse.SourceValue> valuesBySource =
+                new LinkedHashMap<>();
+        for (String code : sourceCodes) {
+            String val = rawBySource.get(code); // null nếu nguồn không có field này
+            boolean diff = (val != null) && isDifferent(val, masterValue);
+            valuesBySource.put(code, ProfileMultiSourceComparisonResponse.SourceValue.builder()
+                    .value(val)
+                    .different(diff)
+                    .build());
+        }
+        return ProfileMultiSourceComparisonResponse.Row.builder()
+                .propertyName(propertyName)
+                .propertyLabel(propertyLabel)
+                .masterValue(masterValue)
+                .valuesBySource(valuesBySource)
                 .build();
     }
 
@@ -464,6 +624,7 @@ public class ProfileDetailAssembler {
             builder.channelsInteracted(resolveChannels(events))
                     .sessionsLast30Days(resolveSessionsLast30Days(events))
                     .recentOrder(resolveRecentOrder(events))
+                    .lastCampaignResponse(resolveLastCampaignResponse(events))
                     .timeline(buildTimeline(events));
             // engagementScore: để trống (chưa chốt công thức)
         }
@@ -517,6 +678,26 @@ public class ProfileDetailAssembler {
                 .orElse(null);
     }
 
+    /**
+     * Phản hồi campaign gần nhất (event {@code campaignResponse}, events đã sort DESC).
+     * Null nếu không có event nào — chưa có nguồn/data thì FE hiển thị trống.
+     */
+    private ProfileDigitalBehaviorResponse.LastCampaignResponse resolveLastCampaignResponse(
+            List<CustomerEvent> events) {
+        CustomerEvent e = latestEvent(events, CustomerEventDerivations.EVENT_CAMPAIGN_RESPONSE);
+        if (e == null) return null;
+        Map<String, Object> p = e.getProperties();
+        String channel = CustomerEventDerivations.asString(p, CustomerEventDerivations.PROP_CHANNEL);
+        if (!StringUtils.hasText(channel)) {
+            channel = e.getSourceSystem(); // fallback: nguồn phát sinh event
+        }
+        return ProfileDigitalBehaviorResponse.LastCampaignResponse.builder()
+                .campaignCode(CustomerEventDerivations.asString(p, CustomerEventDerivations.PROP_CAMPAIGN_CODE))
+                .channel(channel)
+                .occurredAt(e.getOccurredAt())
+                .build();
+    }
+
     private List<ProfileDigitalBehaviorResponse.TimelineItem> buildTimeline(List<CustomerEvent> events) {
         return events.stream()
                 .map(e -> ProfileDigitalBehaviorResponse.TimelineItem.builder()
@@ -550,6 +731,7 @@ public class ProfileDetailAssembler {
         return switch (eventType) {
             case CustomerEventDerivations.EVENT_LOGIN -> "Đăng nhập";
             case CustomerEventDerivations.EVENT_CREATE_ORDER -> "Tạo đơn hàng";
+            case CustomerEventDerivations.EVENT_CAMPAIGN_RESPONSE -> "Phản hồi campaign";
             case "view" -> "Xem trang";
             default -> eventType;
         };
@@ -562,33 +744,28 @@ public class ProfileDetailAssembler {
     /** Cửa sổ thời gian xét cho tab mảng dịch vụ. */
     private static final int SERVICE_LINE_MONTHS_WINDOW = 12;
 
-    /**
-     * GAP — field spec yêu cầu nhưng chưa có nguồn dữ liệu trong customer_events.properties,
-     * để null ở bước demo. Liệt kê theo từng mảng để FE/nghiệp vụ nắm.
-     */
-    private static final Map<ServiceLine, List<String>> PENDING_FIELDS = Map.of(
-            ServiceLine.BCCP, List.of("tỷ lệ phát thành công", "tỷ lệ hoàn", "thời gian giao trung bình",
-                    "COD đã thu", "COD chưa thu", "COD đối soát", "bảng đóng góp theo nguồn"),
-            ServiceLine.TCBC, List.of("doanh thu phí dịch vụ", "giá trị giao dịch trung bình",
-                    "kênh chính", "loại giao dịch nhiều nhất"),
-            ServiceLine.LOGISTICS, List.of("điểm kho đang dùng", "sản lượng fulfillment",
-                    "SLA giao hàng", "tồn kho SKU", "tỷ lệ giao đúng hẹn"),
-            ServiceLine.TMDT, List.of("tỷ lệ phát thành công", "tỷ lệ hoàn", "thời gian giao trung bình"),
-            ServiceLine.PPBL, List.of(),
-            ServiceLine.HCC, List.of(),
-            ServiceLine.MVNO, List.of()
-    );
+    /** Các mảng có khái niệm COD (mới build cod object + contributionBySource). Còn lại cod=null, contribution=[]. */
+    private static final Set<ServiceLine> COD_SERVICE_LINES =
+            java.util.EnumSet.of(ServiceLine.BCCP, ServiceLine.TCBC);
 
     /** Accumulator nội bộ cho mỗi mảng dịch vụ. */
     private static final class ServiceLineAgg {
         long orders = 0L;
         BigDecimal revenue = BigDecimal.ZERO;
         BigDecimal cod = BigDecimal.ZERO;
+        /** Đóng góp theo sourceSystem (giữ thứ tự xuất hiện) — cho systemsUsed + contributionBySource. */
+        final Map<String, SourceContribution> bySource = new LinkedHashMap<>();
+    }
+
+    /** Đóng góp của 1 nguồn cho 1 mảng dịch vụ. */
+    private static final class SourceContribution {
+        long orders = 0L;
+        BigDecimal cod = BigDecimal.ZERO;
     }
 
     /**
      * Tổng hợp hoạt động theo 7 mảng dịch vụ từ event {@code createOrder} trong
-     * {@link #SERVICE_LINE_MONTHS_WINDOW} tháng gần nhất. Luôn trả đủ 7 mảng.
+     * {@link #SERVICE_LINE_MONTHS_WINDOW} tháng gần nhất. Luôn trả đủ 7 mảng, dùng chung 1 shape.
      *
      * @param events customer_events của profile (nullable) — không bắt buộc sort trước.
      */
@@ -615,6 +792,10 @@ public class ProfileDetailAssembler {
                 ServiceLineAgg agg = byLine.computeIfAbsent(line, k -> new ServiceLineAgg());
                 agg.orders++;
 
+                String source = StringUtils.hasText(e.getSourceSystem()) ? e.getSourceSystem() : "UNKNOWN";
+                SourceContribution sc = agg.bySource.computeIfAbsent(source, k -> new SourceContribution());
+                sc.orders++;
+
                 BigDecimal amount = CustomerEventDerivations.asBigDecimal(
                         e.getProperties(), CustomerEventDerivations.PROP_AMOUNT);
                 if (amount != null) {
@@ -623,6 +804,7 @@ public class ProfileDetailAssembler {
                             e.getProperties(), CustomerEventDerivations.PROP_PAYMENT_METHOD);
                     if ("COD".equalsIgnoreCase(paymentMethod)) {
                         agg.cod = agg.cod.add(amount);
+                        sc.cod = sc.cod.add(amount);
                     }
                 }
             }
@@ -632,6 +814,7 @@ public class ProfileDetailAssembler {
         for (ServiceLine line : ServiceLine.values()) {
             ServiceLineAgg agg = byLine.get(line);
             boolean active = agg != null && agg.orders > 0;
+            boolean hasCod = COD_SERVICE_LINES.contains(line);
 
             ProfileServiceLinesResponse.ServiceLineBlock.ServiceLineBlockBuilder b =
                     ProfileServiceLinesResponse.ServiceLineBlock.builder()
@@ -639,17 +822,47 @@ public class ProfileDetailAssembler {
                             .name(line.getLabel())
                             .active(active)
                             .statusText(active ? "Đang dùng" : "Chưa dùng")
-                            .pendingFields(PENDING_FIELDS.getOrDefault(line, Collections.emptyList()));
+                            .systemsUsed(active
+                                    ? new ArrayList<>(agg.bySource.keySet())
+                                    : Collections.emptyList())
+                            .extra(buildServiceLineExtra(line));
+            // successDeliveryRate / returnRate / avgDeliveryDays / signal: chưa có nguồn → giữ null (builder default).
 
             if (active) {
                 BigDecimal avgPerMonth = BigDecimal.valueOf(agg.orders)
                         .divide(BigDecimal.valueOf(SERVICE_LINE_MONTHS_WINDOW), 2, RoundingMode.HALF_UP);
                 b.totalRevenue(agg.revenue)
                         .totalOrders(agg.orders)
-                        .avgOrdersPerMonth(avgPerMonth)
-                        .codTotal(agg.cod);
+                        .avgOrdersPerMonth(avgPerMonth);
             }
-            // Mảng "Chưa dùng": để null các số liệu (theo spec: chỉ trạng thái + "Chưa phát sinh dữ liệu").
+            // Mảng "Chưa dùng": totalRevenue/totalOrders/avgOrdersPerMonth để null.
+
+            // COD object: chỉ mảng có khái niệm COD; total tính được, các field còn lại null.
+            if (hasCod) {
+                b.cod(ProfileServiceLinesResponse.Cod.builder()
+                        .total(active ? agg.cod : null)
+                        .collected(null)
+                        .outstanding(null)
+                        .reconciliationStatus(null)
+                        .build());
+            }
+            // Mảng không có COD (Logistics, TMĐT, PPBL, HCC, MVNO): cod = null (builder default).
+
+            // contributionBySource: chỉ mảng có COD & đang hoạt động; role để null. Còn lại rỗng [].
+            if (hasCod && active) {
+                List<ProfileServiceLinesResponse.ContributionBySource> contribs = new ArrayList<>();
+                for (Map.Entry<String, SourceContribution> en : agg.bySource.entrySet()) {
+                    contribs.add(ProfileServiceLinesResponse.ContributionBySource.builder()
+                            .source(en.getKey())
+                            .role(null)
+                            .orderCount(en.getValue().orders)
+                            .codContribution(en.getValue().cod)
+                            .build());
+                }
+                b.contributionBySource(contribs);
+            } else {
+                b.contributionBySource(Collections.emptyList());
+            }
 
             blocks.add(b.build());
         }
@@ -658,6 +871,138 @@ public class ProfileDetailAssembler {
                 .masterProfileId(masterProfileId)
                 .monthsWindow(SERVICE_LINE_MONTHS_WINDOW)
                 .serviceLines(blocks)
+                .build();
+    }
+
+    /**
+     * Field đặc thù từng mảng (đặt trong {@code extra}). Dùng LinkedHashMap để giữ thứ tự
+     * và cho phép value null (Map.of không cho null). BCCP/PPBL/HCC/MVNO → rỗng {@code {}}.
+     */
+    private Map<String, Object> buildServiceLineExtra(ServiceLine line) {
+        Map<String, Object> extra = new LinkedHashMap<>();
+        switch (line) {
+            case TCBC -> {
+                extra.put("mainChannel", null);
+                extra.put("topTransactionType", null);
+            }
+            case LOGISTICS -> {
+                extra.put("activeWarehouseCount", null);
+                extra.put("fulfillmentVolume", null);
+                extra.put("deliverySla", null);
+                extra.put("currentStockSku", null);
+                extra.put("onTimeDeliveryRate", null);
+            }
+            case TMDT -> {
+                extra.put("gmv", null);
+                extra.put("onlineShopCount", null);
+                extra.put("mainPlatforms", null);
+            }
+            default -> {
+                // BCCP, PPBL, HCC, MVNO: không có field riêng
+            }
+        }
+        return extra;
+    }
+
+    // =====================================================================
+    // TAB: CSKH (khiếu nại — join complaintCreated + complaintResolved)
+    // =====================================================================
+
+    /** Trạng thái khiếu nại đã tạo, đọc từ event complaintCreated. */
+    private static final class ComplaintCreated {
+        final String status;
+        final LocalDateTime slaDeadline;
+        ComplaintCreated(String status, LocalDateTime slaDeadline) {
+            this.status = status;
+            this.slaDeadline = slaDeadline;
+        }
+    }
+
+    /** Kết quả xử lý khiếu nại, đọc từ event complaintResolved. */
+    private static final class ComplaintResolved {
+        final LocalDateTime resolvedAt;
+        final BigDecimal satisfactionScore;
+        ComplaintResolved(LocalDateTime resolvedAt, BigDecimal satisfactionScore) {
+            this.resolvedAt = resolvedAt;
+            this.satisfactionScore = satisfactionScore;
+        }
+    }
+
+    /**
+     * Tổng hợp CSKH từ event khiếu nại của profile (đã match vào {@code masterProfileId} —
+     * event UNMATCHED có masterProfileId null nên không lọt vào đây). Join complaintCreated +
+     * complaintResolved theo {@code complaintId}. Chưa có khiếu nại → cả 4 field null.
+     *
+     * @param events customer_events của profile (nullable) — không bắt buộc sort trước.
+     */
+    public ProfileCskhResponse assembleCskh(List<CustomerEvent> events) {
+        // complaintId -> trạng thái tạo / kết quả xử lý (events sort DESC → putIfAbsent giữ bản mới nhất)
+        Map<String, ComplaintCreated> created = new LinkedHashMap<>();
+        Map<String, ComplaintResolved> resolved = new LinkedHashMap<>();
+
+        if (!CollectionUtils.isEmpty(events)) {
+            for (CustomerEvent e : events) {
+                Map<String, Object> p = e.getProperties();
+                String complaintId = CustomerEventDerivations.asString(p, CustomerEventDerivations.PROP_COMPLAINT_ID);
+                if (!StringUtils.hasText(complaintId)) {
+                    continue;
+                }
+                if (CustomerEventDerivations.EVENT_COMPLAINT_CREATED.equals(e.getEventType())) {
+                    created.putIfAbsent(complaintId, new ComplaintCreated(
+                            CustomerEventDerivations.asString(p, CustomerEventDerivations.PROP_STATUS),
+                            CustomerEventDerivations.asLocalDateTime(p, CustomerEventDerivations.PROP_SLA_DEADLINE)));
+                } else if (CustomerEventDerivations.EVENT_COMPLAINT_RESOLVED.equals(e.getEventType())) {
+                    resolved.putIfAbsent(complaintId, new ComplaintResolved(
+                            CustomerEventDerivations.asLocalDateTime(p, CustomerEventDerivations.PROP_RESOLVED_AT),
+                            CustomerEventDerivations.asBigDecimal(p, CustomerEventDerivations.PROP_SATISFACTION_SCORE)));
+                }
+            }
+        }
+
+        // Chưa từng có khiếu nại → toàn bộ null (không trả 0)
+        if (created.isEmpty()) {
+            return ProfileCskhResponse.builder().build();
+        }
+
+        long totalComplaints = created.size();
+
+        // OPEN và chưa có bản resolved tương ứng
+        long openComplaints = created.entrySet().stream()
+                .filter(en -> "OPEN".equalsIgnoreCase(en.getValue().status))
+                .filter(en -> !resolved.containsKey(en.getKey()))
+                .count();
+
+        // AVG satisfactionScore (bỏ qua null); không có điểm nào → null
+        List<BigDecimal> scores = resolved.values().stream()
+                .map(r -> r.satisfactionScore)
+                .filter(s -> s != null)
+                .collect(Collectors.toList());
+        BigDecimal satisfactionScore = scores.isEmpty()
+                ? null
+                : scores.stream().reduce(BigDecimal.ZERO, BigDecimal::add)
+                        .divide(BigDecimal.valueOf(scores.size()), 2, RoundingMode.HALF_UP);
+
+        // slaOnTimeRate (0-1): resolvedAt <= slaDeadline / tổng đã resolved; không có resolved → null
+        BigDecimal slaOnTimeRate = null;
+        int totalResolved = resolved.size();
+        if (totalResolved > 0) {
+            long onTime = resolved.entrySet().stream()
+                    .filter(en -> {
+                        ComplaintResolved r = en.getValue();
+                        ComplaintCreated c = created.get(en.getKey());
+                        return r.resolvedAt != null && c != null && c.slaDeadline != null
+                                && !r.resolvedAt.isAfter(c.slaDeadline);
+                    })
+                    .count();
+            slaOnTimeRate = BigDecimal.valueOf(onTime)
+                    .divide(BigDecimal.valueOf(totalResolved), 2, RoundingMode.HALF_UP);
+        }
+
+        return ProfileCskhResponse.builder()
+                .totalComplaints(totalComplaints)
+                .openComplaints(openComplaints)
+                .satisfactionScore(satisfactionScore)
+                .slaOnTimeRate(slaOnTimeRate)
                 .build();
     }
 

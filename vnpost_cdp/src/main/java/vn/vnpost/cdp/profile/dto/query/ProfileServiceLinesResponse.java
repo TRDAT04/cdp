@@ -8,13 +8,15 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Tab "Hoạt động theo mảng dịch vụ chính" (7 mảng: BCCP, TCBC, PPBL, HCC, Logistics, TMĐT, MVNO).
  *
- * <p>Luôn trả về ĐỦ 7 mảng, kể cả mảng "Chưa dùng" ({@code active=false}) — chỉ khác ở chỗ
- * các số liệu bằng 0/null. Dữ liệu suy diễn từ {@code customer_events} (event {@code createOrder})
- * trong cửa sổ {@link #monthsWindow} tháng gần nhất.</p>
+ * <p>Luôn trả về ĐỦ 7 mảng, kể cả mảng "Chưa dùng" ({@code active=false}). MỌI mảng dùng CHUNG
+ * một shape (base); field đặc thù của từng mảng nằm trong {@link ServiceLineBlock#extra}.
+ * Dữ liệu suy diễn từ {@code customer_events} (event {@code createOrder}) trong cửa sổ
+ * {@link #monthsWindow} tháng gần nhất; field chưa có nguồn dữ liệu để {@code null}.</p>
  */
 @Getter
 @Setter
@@ -33,6 +35,11 @@ public class ProfileServiceLinesResponse {
 
     // ----------------------------------------------------------------
 
+    /**
+     * Shape CHUNG cho cả 7 mảng dịch vụ. Field nào chưa có nguồn/công thức để {@code null}
+     * (successDeliveryRate, returnRate, avgDeliveryDays, các field trong {@code cod}, signal...).
+     * Field đặc thù từng mảng đặt trong {@link #extra}.
+     */
     @Getter
     @Setter
     @Builder
@@ -52,31 +59,73 @@ public class ProfileServiceLinesResponse {
         /** "Đang dùng" / "Chưa dùng". */
         private String statusText;
 
+        /** Các hệ thống phát sinh giao dịch cho mảng này (distinct sourceSystem). Rỗng nếu chưa có. */
+        private List<String> systemsUsed;
+
         // --- Metric TÍNH ĐƯỢC từ customer_events (createOrder) ---
 
-        /** Tổng doanh thu (sum amount) trong cửa sổ xét. */
+        /** Tổng doanh thu (sum amount) trong cửa sổ xét. Với TMĐT mang ý nghĩa "Doanh thu qua sàn 12 tháng". */
         private BigDecimal totalRevenue;
 
-        /** Tổng số đơn (count createOrder) trong cửa sổ xét. */
+        /** Tổng số đơn (count createOrder) trong cửa sổ xét. Với TMĐT mang ý nghĩa "Đơn giao chặng cuối". */
         private Long totalOrders;
 
         /** Trung bình số đơn / tháng = totalOrders / monthsWindow. */
         private BigDecimal avgOrdersPerMonth;
 
-        /** Tổng COD (sum amount với paymentMethod=COD). Chỉ là TỔNG — xem GAP bên dưới. */
-        private BigDecimal codTotal;
+        // --- Field spec yêu cầu nhưng CHƯA có nguồn dữ liệu → null ---
 
-        /**
-         * GAP — các field spec yêu cầu nhưng HIỆN CHƯA CÓ NGUỒN DỮ LIỆU trong
-         * {@code customer_events.properties}, nên để {@code null} ở bước demo.
-         * Danh sách này liệt kê tên field còn thiếu theo từng mảng để FE/nghiệp vụ nắm.
-         * Ví dụ: BCCP → "tỷ lệ phát thành công", "tỷ lệ hoàn", "thời gian giao TB",
-         * "COD đã thu/chưa thu/đối soát", "bảng đóng góp theo nguồn (nguồn, vai trò, số đơn, COD)";
-         * TCBC → "doanh thu phí dịch vụ", "giá trị TB", "kênh chính", "loại GD nhiều nhất";
-         * Logistics → "điểm kho", "sản lượng fulfillment", "SLA giao hàng", "tồn kho SKU",
-         * "tỷ lệ giao đúng hẹn".
-         * (Field "vai trò" và "Tín hiệu/Rủi ro" cố ý CHƯA làm ở bước này.)
-         */
-        private List<String> pendingFields;
+        /** Tỷ lệ phát thành công. Chưa có nguồn → null. */
+        private BigDecimal successDeliveryRate;
+
+        /** Tỷ lệ hoàn. Với TMĐT mang ý nghĩa "Tỷ lệ hoàn TMĐT". Chưa có nguồn → null. */
+        private BigDecimal returnRate;
+
+        /** Thời gian giao trung bình (ngày). Chưa có nguồn → null. */
+        private BigDecimal avgDeliveryDays;
+
+        /** Thông tin COD. Null nếu mảng KHÔNG có khái niệm COD (VD Logistics, TMĐT). */
+        private Cod cod;
+
+        /** Đóng góp theo nguồn. Rỗng {@code []} nếu mảng không áp dụng. */
+        private List<ContributionBySource> contributionBySource;
+
+        /** Tín hiệu/Rủi ro. Chưa làm → null. */
+        private String signal;
+
+        /** Field đặc thù từng mảng (có thể rỗng {@code {}}). Không bao giờ null. */
+        private Map<String, Object> extra;
+    }
+
+    /**
+     * Khối COD. {@code total} tính được từ event (sum amount với paymentMethod=COD);
+     * các field còn lại chưa có nguồn dữ liệu → null.
+     */
+    @Getter
+    @Setter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Cod {
+        private BigDecimal total;
+        private BigDecimal collected;
+        private BigDecimal outstanding;
+        private String reconciliationStatus;
+    }
+
+    /**
+     * Một dòng đóng góp theo nguồn. {@code role} chưa làm → null; {@code orderCount} và
+     * {@code codContribution} tính từ event (group theo sourceSystem).
+     */
+    @Getter
+    @Setter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ContributionBySource {
+        private String source;
+        private String role;
+        private Long orderCount;
+        private BigDecimal codContribution;
     }
 }

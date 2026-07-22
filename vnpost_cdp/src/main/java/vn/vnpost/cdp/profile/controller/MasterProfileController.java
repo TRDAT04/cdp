@@ -206,6 +206,13 @@ public class MasterProfileController {
         return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileServiceLines(id)));
     }
 
+    /** Tab: CSKH (tổng hợp khiếu nại — join complaintCreated + complaintResolved). */
+    @GetMapping("/{id}/cskh")
+    public ResponseEntity<MethodResult> getCskh(@PathVariable Long id) {
+        log.info("GET /api/v1/admin/profiles/{}/cskh", id);
+        return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileCskh(id)));
+    }
+
     /** Summary card: tổng hợp nhanh thông tin profile (fullName, uid, tags, activeSystems…). */
     @GetMapping("/{id}/summary")
     public ResponseEntity<MethodResult> getProfileSummary(@PathVariable Long id) {

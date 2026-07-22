@@ -44,7 +44,26 @@ public class ProfileDigitalBehaviorResponse {
     /** Dòng thời gian các event gần đây (mới nhất trước). */
     private List<TimelineItem> timeline;
 
+    /**
+     * Lần phản hồi campaign gần nhất (event {@code campaignResponse}).
+     * Null nếu profile chưa có event phản hồi campaign nào.
+     */
+    private LastCampaignResponse lastCampaignResponse;
+
     // ----------------------------------------------------------------
+
+    @Getter
+    @Setter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class LastCampaignResponse {
+        /** Mã campaign (VD: SALE06). */
+        private String campaignCode;
+        /** Kênh phản hồi (VD: EMAIL) — property {@code channel}, fallback sourceSystem. */
+        private String channel;
+        private LocalDateTime occurredAt;
+    }
 
     @Getter
     @Setter

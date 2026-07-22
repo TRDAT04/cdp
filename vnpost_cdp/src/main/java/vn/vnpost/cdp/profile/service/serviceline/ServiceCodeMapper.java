@@ -18,12 +18,6 @@ public final class ServiceCodeMapper {
     private ServiceCodeMapper() {
     }
 
-    /**
-     * Map cứng serviceCode -> ServiceLine. Key so khớp KHÔNG phân biệt hoa/thường
-     * (đã upper-case sẵn ở đây, {@link #resolve(String)} cũng upper-case input).
-     *
-     * TẠM — thay bằng mã dịch vụ thật khi có.
-     */
     private static final Map<String, ServiceLine> MAPPING = Map.ofEntries(
             // --- BCCP: Bưu chính chuyển phát ---
             Map.entry("EMS", ServiceLine.BCCP),
@@ -43,12 +37,7 @@ public final class ServiceCodeMapper {
             Map.entry("SIM_DATA_MVNO", ServiceLine.MVNO)
     );
 
-    /**
-     * Tìm {@link ServiceLine} cho một serviceCode.
-     *
-     * @return ServiceLine tương ứng, hoặc {@code null} nếu chưa có ánh xạ
-     *         (ghi log WARN để dễ phát hiện serviceCode mới chưa map).
-     */
+
     public static ServiceLine resolve(String serviceCode) {
         if (serviceCode == null || serviceCode.isBlank()) {
             return null;

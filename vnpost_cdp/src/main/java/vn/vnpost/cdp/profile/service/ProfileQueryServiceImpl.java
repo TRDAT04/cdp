@@ -133,7 +133,9 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
     public ProfileMultiSourceComparisonResponse getProfileMultiSource(Long id) {
         MasterProfile profile = findProfileOrThrow(id);
         List<ProfileAttributeValue> attrs = attributeValueRepository.findByMasterProfileId(profile.getId());
-        return profileDetailAssembler.assembleMultiSource(profile, attrs);
+        List<ProfileIdentityLink> links = identityLinkRepository.findByMasterProfileId(profile.getId());
+        List<ProfileSourceRecord> records = sourceRecordRepository.findByMasterProfileId(profile.getId());
+        return profileDetailAssembler.assembleMultiSource(profile, attrs, links, records);
     }
 
     @Override
@@ -166,6 +168,14 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
         List<CustomerEvent> events = customerEventRepository
                 .findTop50ByMasterProfileIdOrderByOccurredAtDesc(profile.getId());
         return profileDetailAssembler.assembleServiceLines(profile.getId(), events);
+    }
+
+    @Override
+    public ProfileCskhResponse getProfileCskh(Long id) {
+        MasterProfile profile = findProfileOrThrow(id);
+        List<CustomerEvent> events = customerEventRepository
+                .findTop50ByMasterProfileIdOrderByOccurredAtDesc(profile.getId());
+        return profileDetailAssembler.assembleCskh(events);
     }
 
     @Override

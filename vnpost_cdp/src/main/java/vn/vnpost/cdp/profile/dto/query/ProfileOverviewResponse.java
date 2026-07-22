@@ -11,8 +11,9 @@ import java.util.List;
 
 /**
  * Tab "Tổng quan".
- * <p>NOTE: chưa có trường "Vai trò giao dịch (Người gửi/Chủ shop + số lần)" vì
- * hiện không có dữ liệu nguồn tương ứng trong entity/Unomi.</p>
+ * <p>NOTE: trường "Vai trò giao dịch (Người gửi/Chủ shop + số lần)" hiện là placeholder
+ * ({@link TransactionRolesResponse}) — chưa có dữ liệu nguồn tương ứng trong entity/Unomi,
+ * chờ bổ sung field sender/receiver trong event createOrder.</p>
  */
 @Getter
 @Setter
@@ -59,4 +60,8 @@ public class ProfileOverviewResponse {
 
     /** Phân khúc hiện tại (segment) lấy từ Unomi. */
     private List<String> segments;
+
+    // TODO: transactionRoles hiện chưa có data — cần bổ sung sau khi có field sender/receiver trong event createOrder. Đây là field placeholder cho FE ghép giao diện.
+    /** Vai trò giao dịch (Người gửi/Người nhận/Chủ shop + số lần). Placeholder cho FE. */
+    private TransactionRolesResponse transactionRoles;
 }
