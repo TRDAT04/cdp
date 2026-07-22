@@ -1,0 +1,78 @@
+{
+  "_comment": "Data mau cho tinh nang 'Hoat dong theo mang dich vu'. Moi phan tu trong 'events' la BODY gui toi POST http://localhost:9001/api/v1/admin/customer-events/send",
+
+  "DIEU_KIEN_BAT_BUOC": [
+    "1) Event chi match vao profile khi da ton tai ProfileSourceRecord cung (sourceSystem, sourceCustomerId) tro toi mot MasterProfile. Neu khong -> syncStatus=UNMATCHED, masterProfileId=null -> KHONG hien trong API service-lines.",
+    "2) Cap (CAS, CAS-D003) duoi day la cap DA match vao profile id=69 (chinh la cap sinh ra ket qua BCCP/EMS cua ban). Neu profile 69 cua ban duoc tao tu cap khac, hay THAY sourceSystem/sourceCustomerId o TAT CA event ben duoi bang dung cap do.",
+    "3) Chi eventType=createOrder + co serviceCode map duoc trong ServiceCodeMapper + occurredAt trong 12 thang gan nhat (>= 2025-07-22) moi duoc tinh vao service-lines.",
+    "4) messageId/event_code tu sinh UUID trong producer -> khong can dat, khong lo trung.",
+    "5) Can Kafka dang chay. Unomi co the tat (sync loi van khong anh huong luu event + match profile)."
+  ],
+
+  "MANG_SE_BAT_SANG_DANG_DUNG": "Logistics (KHO_VAN), PPBL (POS_RETAIL), MVNO (SIM_DATA_MVNO), TCBC (THU_HO_COD, co COD). Cong voi BCCP (EMS) da co san -> 5/7 mang Dang dung.",
+
+  "events": [
+    {
+      "sourceSystem": "CAS",
+      "sourceCustomerId": "CAS-D003",
+      "eventType": "createOrder",
+      "sessionId": "sess-serviceline-log-001",
+      "occurredAt": "2026-07-10T09:20:00",
+      "properties": {
+        "orderId": "ORD-LOG-0001",
+        "amount": 12000000,
+        "orderStatus": "CREATED",
+        "serviceCode": "KHO_VAN",
+        "paymentMethod": "COD"
+      },
+      "source": { "itemType": "system", "scope": "my-vnpost-app", "itemId": "CAS" },
+      "target": { "itemType": "order", "scope": "my-vnpost-app", "itemId": "ORD-LOG-0001" }
+    },
+    {
+      "sourceSystem": "CAS",
+      "sourceCustomerId": "CAS-D003",
+      "eventType": "createOrder",
+      "sessionId": "sess-serviceline-ppbl-001",
+      "occurredAt": "2026-07-12T14:05:00",
+      "properties": {
+        "orderId": "ORD-PPBL-0001",
+        "amount": 3500000,
+        "orderStatus": "CREATED",
+        "serviceCode": "POS_RETAIL"
+      },
+      "source": { "itemType": "system", "scope": "my-vnpost-app", "itemId": "CAS" },
+      "target": { "itemType": "order", "scope": "my-vnpost-app", "itemId": "ORD-PPBL-0001" }
+    },
+    {
+      "sourceSystem": "CAS",
+      "sourceCustomerId": "CAS-D003",
+      "eventType": "createOrder",
+      "sessionId": "sess-serviceline-mvno-001",
+      "occurredAt": "2026-07-15T08:40:00",
+      "properties": {
+        "orderId": "ORD-MVNO-0001",
+        "amount": 200000,
+        "orderStatus": "CREATED",
+        "serviceCode": "SIM_DATA_MVNO"
+      },
+      "source": { "itemType": "system", "scope": "my-vnpost-app", "itemId": "CAS" },
+      "target": { "itemType": "order", "scope": "my-vnpost-app", "itemId": "ORD-MVNO-0001" }
+    },
+    {
+      "sourceSystem": "CAS",
+      "sourceCustomerId": "CAS-D003",
+      "eventType": "createOrder",
+      "sessionId": "sess-serviceline-tcbc-001",
+      "occurredAt": "2026-07-18T16:30:00",
+      "properties": {
+        "orderId": "ORD-TCBC-0001",
+        "amount": 5000000,
+        "orderStatus": "CREATED",
+        "serviceCode": "THU_HO_COD",
+        "paymentMethod": "COD"
+      },
+      "source": { "itemType": "system", "scope": "my-vnpost-app", "itemId": "CAS" },
+      "target": { "itemType": "order", "scope": "my-vnpost-app", "itemId": "ORD-TCBC-0001" }
+    }
+  ]
+}

@@ -199,6 +199,13 @@ public class MasterProfileController {
         return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileChangeLogs(id)));
     }
 
+    /** Tab: Hoạt động theo mảng dịch vụ chính (7 mảng). */
+    @GetMapping("/{id}/service-lines")
+    public ResponseEntity<MethodResult> getServiceLines(@PathVariable Long id) {
+        log.info("GET /api/v1/admin/profiles/{}/service-lines", id);
+        return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileServiceLines(id)));
+    }
+
     /** Summary card: tổng hợp nhanh thông tin profile (fullName, uid, tags, activeSystems…). */
     @GetMapping("/{id}/summary")
     public ResponseEntity<MethodResult> getProfileSummary(@PathVariable Long id) {

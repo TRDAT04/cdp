@@ -1,7 +1,7 @@
 package vn.vnpost.cdp.ingestion.enums;
 
 public enum ProfileSourceSystemCode {
-    CRM, CMS, PORTAL, MYVNPOST, POSTID, CAS;
+    CRM, CMS, PORTAL, PORTAL_KHL, MYVNPOST, POSTID, CAS, WEBSITE, PAYPOST;
     ;
 
     public static boolean isValid(String code) {

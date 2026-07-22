@@ -2,8 +2,13 @@ package vn.vnpost.cdp.profile.assembler;
 
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
 import vn.vnpost.cdp.customer_event.entity.CustomerEvent;
 import vn.vnpost.cdp.profile.dto.query.*;
+import vn.vnpost.cdp.profile.enums.CustomerType;
+import vn.vnpost.cdp.profile.enums.IdentityType;
+import vn.vnpost.cdp.profile.enums.ServiceLine;
+import vn.vnpost.cdp.profile.service.serviceline.ServiceCodeMapper;
 import vn.vnpost.cdp.profile.dto.query.ProfileSummaryResponse.LastInteraction;
 import vn.vnpost.cdp.profile.dto.query.ProfileSummaryResponse.TagItem;
 import vn.vnpost.cdp.profile.entity.*;
@@ -32,7 +37,8 @@ public class ProfileDetailAssembler {
             Map.entry("fullName", "Họ tên"),
             Map.entry("phone", "SĐT"),
             Map.entry("email", "Email"),
-            Map.entry("identityNo", "CCCD/MST"),
+            Map.entry("identityNo", "CCCD"),
+            Map.entry("taxCode", "MST"),
             Map.entry("gender", "Giới tính"),
             Map.entry("dateOfBirth", "Ngày sinh"),
             Map.entry("customerType", "Loại khách hàng"),
@@ -65,8 +71,11 @@ public class ProfileDetailAssembler {
                 .identityNo(profile.getIdentityNo())
                 .gender(profile.getGender())
                 .dateOfBirth(profile.getDateOfBirth())
+                .taxCode(profile.getTaxCode())
                 .customerType(profile.getCustomerType())
                 .customerTypeText(mapCustomerTypeText(profile.getCustomerType()))
+                .customerTier(profile.getCustomerTier())
+                .identities(buildIdentities(links))
                 .provinceCode(profile.getProvinceCode())
                 .provinceName(profile.getProvinceName())
                 .unitCode(profile.getUnitCode())
@@ -132,9 +141,12 @@ public class ProfileDetailAssembler {
                 .phone(profile.getPhone())
                 .email(profile.getEmail())
                 .identityNoMasked(maskIdentityNo(profile.getIdentityNo()))
+                .taxCode(profile.getTaxCode())
                 .postId(resolvePostId(links))
+                .identities(buildIdentities(links))
                 .customerType(profile.getCustomerType())
                 .customerTypeText(mapCustomerTypeText(profile.getCustomerType()))
+                .customerTier(profile.getCustomerTier())
                 .provinceCode(profile.getProvinceCode())
                 .provinceName(profile.getProvinceName())
                 .unitCode(profile.getUnitCode())
@@ -432,34 +444,14 @@ public class ProfileDetailAssembler {
     // =====================================================================
 
     /**
-     * @param unomiData dữ liệu tổng hợp từ Unomi (nullable)
-     * @param events    customer_events của profile, đã sort mới nhất trước (nullable)
+     * @param events customer_events của profile, đã sort mới nhất trước (nullable)
      */
-    public ProfileDigitalBehaviorResponse assembleBehavior(
-            UnomiProfileResponse unomiData, List<CustomerEvent> events) {
+    public ProfileDigitalBehaviorResponse assembleBehavior(List<CustomerEvent> events) {
 
         ProfileDigitalBehaviorResponse.ProfileDigitalBehaviorResponseBuilder builder =
                 ProfileDigitalBehaviorResponse.builder()
-                        .segments(Collections.emptyList())
                         .channelsInteracted(Collections.emptyList())
                         .timeline(Collections.emptyList());
-
-        if (unomiData != null) {
-            builder.segments(CollectionUtils.isEmpty(unomiData.getSegments())
-                    ? Collections.emptyList()
-                    : unomiData.getSegments());
-
-            UnomiProfileProperties props = unomiData.getProperties();
-            if (props != null) {
-                builder.firstVisit(props.getFirstVisit())
-                        .previousVisit(props.getPreviousVisit())
-                        .lastVisit(props.getLastVisit())
-                        .nbOfVisits(props.getNbOfVisits())
-                        .purchaseCount(props.getPurchaseCount())
-                        .totalSpent(props.getTotalSpent())
-                        .lastTransactionDate(props.getLastTransactionDate());
-            }
-        }
 
         if (!CollectionUtils.isEmpty(events)) {
             // events đã sort occurredAt DESC -> phần tử đầu tiên khớp là mới nhất
@@ -564,6 +556,112 @@ public class ProfileDetailAssembler {
     }
 
     // =====================================================================
+    // TAB: HOẠT ĐỘNG THEO MẢNG DỊCH VỤ (7 mảng)
+    // =====================================================================
+
+    /** Cửa sổ thời gian xét cho tab mảng dịch vụ. */
+    private static final int SERVICE_LINE_MONTHS_WINDOW = 12;
+
+    /**
+     * GAP — field spec yêu cầu nhưng chưa có nguồn dữ liệu trong customer_events.properties,
+     * để null ở bước demo. Liệt kê theo từng mảng để FE/nghiệp vụ nắm.
+     */
+    private static final Map<ServiceLine, List<String>> PENDING_FIELDS = Map.of(
+            ServiceLine.BCCP, List.of("tỷ lệ phát thành công", "tỷ lệ hoàn", "thời gian giao trung bình",
+                    "COD đã thu", "COD chưa thu", "COD đối soát", "bảng đóng góp theo nguồn"),
+            ServiceLine.TCBC, List.of("doanh thu phí dịch vụ", "giá trị giao dịch trung bình",
+                    "kênh chính", "loại giao dịch nhiều nhất"),
+            ServiceLine.LOGISTICS, List.of("điểm kho đang dùng", "sản lượng fulfillment",
+                    "SLA giao hàng", "tồn kho SKU", "tỷ lệ giao đúng hẹn"),
+            ServiceLine.TMDT, List.of("tỷ lệ phát thành công", "tỷ lệ hoàn", "thời gian giao trung bình"),
+            ServiceLine.PPBL, List.of(),
+            ServiceLine.HCC, List.of(),
+            ServiceLine.MVNO, List.of()
+    );
+
+    /** Accumulator nội bộ cho mỗi mảng dịch vụ. */
+    private static final class ServiceLineAgg {
+        long orders = 0L;
+        BigDecimal revenue = BigDecimal.ZERO;
+        BigDecimal cod = BigDecimal.ZERO;
+    }
+
+    /**
+     * Tổng hợp hoạt động theo 7 mảng dịch vụ từ event {@code createOrder} trong
+     * {@link #SERVICE_LINE_MONTHS_WINDOW} tháng gần nhất. Luôn trả đủ 7 mảng.
+     *
+     * @param events customer_events của profile (nullable) — không bắt buộc sort trước.
+     */
+    public ProfileServiceLinesResponse assembleServiceLines(Long masterProfileId, List<CustomerEvent> events) {
+        LocalDateTime threshold = LocalDateTime.now().minusMonths(SERVICE_LINE_MONTHS_WINDOW);
+
+        Map<ServiceLine, ServiceLineAgg> byLine = new java.util.EnumMap<>(ServiceLine.class);
+
+        if (!CollectionUtils.isEmpty(events)) {
+            for (CustomerEvent e : events) {
+                if (!CustomerEventDerivations.EVENT_CREATE_ORDER.equals(e.getEventType())) {
+                    continue;
+                }
+                if (e.getOccurredAt() == null || e.getOccurredAt().isBefore(threshold)) {
+                    continue;
+                }
+                String serviceCode = CustomerEventDerivations.asString(
+                        e.getProperties(), CustomerEventDerivations.PROP_SERVICE_CODE);
+                ServiceLine line = ServiceCodeMapper.resolve(serviceCode);
+                if (line == null) {
+                    continue; // serviceCode null / chưa map — ServiceCodeMapper đã log WARN
+                }
+
+                ServiceLineAgg agg = byLine.computeIfAbsent(line, k -> new ServiceLineAgg());
+                agg.orders++;
+
+                BigDecimal amount = CustomerEventDerivations.asBigDecimal(
+                        e.getProperties(), CustomerEventDerivations.PROP_AMOUNT);
+                if (amount != null) {
+                    agg.revenue = agg.revenue.add(amount);
+                    String paymentMethod = CustomerEventDerivations.asString(
+                            e.getProperties(), CustomerEventDerivations.PROP_PAYMENT_METHOD);
+                    if ("COD".equalsIgnoreCase(paymentMethod)) {
+                        agg.cod = agg.cod.add(amount);
+                    }
+                }
+            }
+        }
+
+        List<ProfileServiceLinesResponse.ServiceLineBlock> blocks = new ArrayList<>();
+        for (ServiceLine line : ServiceLine.values()) {
+            ServiceLineAgg agg = byLine.get(line);
+            boolean active = agg != null && agg.orders > 0;
+
+            ProfileServiceLinesResponse.ServiceLineBlock.ServiceLineBlockBuilder b =
+                    ProfileServiceLinesResponse.ServiceLineBlock.builder()
+                            .code(line.name())
+                            .name(line.getLabel())
+                            .active(active)
+                            .statusText(active ? "Đang dùng" : "Chưa dùng")
+                            .pendingFields(PENDING_FIELDS.getOrDefault(line, Collections.emptyList()));
+
+            if (active) {
+                BigDecimal avgPerMonth = BigDecimal.valueOf(agg.orders)
+                        .divide(BigDecimal.valueOf(SERVICE_LINE_MONTHS_WINDOW), 2, RoundingMode.HALF_UP);
+                b.totalRevenue(agg.revenue)
+                        .totalOrders(agg.orders)
+                        .avgOrdersPerMonth(avgPerMonth)
+                        .codTotal(agg.cod);
+            }
+            // Mảng "Chưa dùng": để null các số liệu (theo spec: chỉ trạng thái + "Chưa phát sinh dữ liệu").
+
+            blocks.add(b.build());
+        }
+
+        return ProfileServiceLinesResponse.builder()
+                .masterProfileId(masterProfileId)
+                .monthsWindow(SERVICE_LINE_MONTHS_WINDOW)
+                .serviceLines(blocks)
+                .build();
+    }
+
+    // =====================================================================
     // TAB 10: NHẬT KÝ
     // =====================================================================
     public ProfileChangeLogsResponse assembleChangeLogs(
@@ -586,8 +684,42 @@ public class ProfileDetailAssembler {
         return av.getPropertyValue();
     }
 
+    /**
+     * Gom toàn bộ định danh động của profile thành object {@link ProfileIdentitiesResponse}.
+     * Field nào chưa có link tương ứng → null.
+     */
+    private ProfileIdentitiesResponse buildIdentities(List<ProfileIdentityLink> links) {
+        return ProfileIdentitiesResponse.builder()
+                .postId(resolvePostId(links))
+                .crmId(resolveIdentity(links, IdentityType.CRM_ID))
+                .khlCode(resolveIdentity(links, IdentityType.KHL_CODE))
+                .appUserId(resolveIdentity(links, IdentityType.APP_USER_ID))
+                .deviceId(resolveIdentity(links, IdentityType.DEVICE_ID))
+                .cookieId(resolveIdentity(links, IdentityType.COOKIE_ID))
+                .paymentId(resolveIdentity(links, IdentityType.PAYMENT_ID))
+                .build();
+    }
+
+    /** Giá trị định danh ACTIVE gần nhất theo identity_type; null nếu không có. */
+    private String resolveIdentity(List<ProfileIdentityLink> links, IdentityType type) {
+        if (CollectionUtils.isEmpty(links)) return null;
+        return links.stream()
+                .filter(l -> type.name().equalsIgnoreCase(l.getIdentityType()))
+                .filter(l -> l.getStatus() == null || l.getStatus() == 1)
+                .map(ProfileIdentityLink::getIdentityValue)
+                .filter(StringUtils::hasText)
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * PostID: ưu tiên identity_type = POST_ID (chuẩn hóa mới),
+     * fallback link nguồn POSTID (dữ liệu cũ chưa chuẩn hóa).
+     */
     private String resolvePostId(List<ProfileIdentityLink> links) {
         if (CollectionUtils.isEmpty(links)) return null;
+        String byType = resolveIdentity(links, IdentityType.POST_ID);
+        if (StringUtils.hasText(byType)) return byType;
         return links.stream()
                 .filter(l -> "POSTID".equalsIgnoreCase(l.getSourceSystem()))
                 .map(l -> l.getIdentityValue() != null ? l.getIdentityValue() : l.getSourceCustomerId())
@@ -727,13 +859,7 @@ public class ProfileDetailAssembler {
     }
 
     private String mapCustomerTypeText(String type) {
-        if (type == null) return null;
-        return switch (type.toUpperCase()) {
-            case "PERSONAL", "CA_NHAN"       -> "Cá nhân";
-            case "FREQUENT", "THUONG_XUYEN"  -> "Thường xuyên";
-            case "VIP"                       -> "VIP";
-            default                          -> type;
-        };
+        return CustomerType.textOf(type);
     }
 
     private String mapMergeStatusText(Short status) {

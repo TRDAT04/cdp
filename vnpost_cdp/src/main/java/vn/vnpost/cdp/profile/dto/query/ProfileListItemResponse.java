@@ -27,7 +27,13 @@ public class ProfileListItemResponse {
     private String email;
     private String customerType;
     private String customerTypeText;
+    /** Hạng khách hàng (VIP, FREQUENT...) — tách khỏi customerType. Null nếu không có. */
+    private String customerTier;
     private String customerGroup;;
+    /** MST — hiển thị nhanh KH doanh nghiệp ở list. Null nếu không có. */
+    private String taxCode;
+    /** Mã KHL — chỉ field này lên list để lọc/nhận diện nhanh KH lớn; các định danh khác nằm ở Detail. */
+    private String khlCode;
     private String warningStatus;
     private String warningText;
     private List<String> sourceSystems;

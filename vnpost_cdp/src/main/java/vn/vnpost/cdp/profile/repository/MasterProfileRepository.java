@@ -20,4 +20,6 @@ public interface MasterProfileRepository extends JpaRepository<MasterProfile, Lo
     boolean existsByProfileCode(String profileCode);
 
     Optional<MasterProfile> findByIdentityNo(String identityNo);
+
+    Optional<MasterProfile> findByTaxCode(String taxCode);
 }

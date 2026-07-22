@@ -9,6 +9,7 @@ import vn.vnpost.cdp.ingestion.enums.MergeDecision;
 import vn.vnpost.cdp.ingestion.enums.ProfileSourceSystemCode;
 import vn.vnpost.cdp.profile.dto.match.ProfileMatchReasonCreateItem;
 import vn.vnpost.cdp.profile.entity.MasterProfile;
+import vn.vnpost.cdp.profile.enums.IdentityType;
 import vn.vnpost.cdp.profile.repository.ProfileIdentityLinkRepository;
 import vn.vnpost.cdp.profile.service.match.ProfileMatchScoreService;
 import vn.vnpost.cdp.profile.dto.match.ProfileMatchScoreResult;
@@ -103,6 +104,59 @@ public class ProfileMergeDecisionService {
             return MergeDecision.AUTO_MERGE;
         }
 
+        // ── Fast-path 2b: MST (taxCode) deterministic — mirror CCCD ──
+        // MST là khóa pháp lý duy nhất của doanh nghiệp. Khác MST → NEED_REVIEW.
+        // Khớp MST + tên không lệch quá xa (>=75%, nhất quán ngưỡng fullName) → AUTO_MERGE (luật #10);
+        // khớp MST nhưng tên lệch xa → NEED_REVIEW để phòng dùng nhầm/chia sẻ MST.
+        String incomingTax  = IdentityUtils.normalizeText(data.getTaxCode());
+        String candidateTax = IdentityUtils.normalizeText(candidate.getTaxCode());
+        if (hasText(incomingTax) && hasText(candidateTax)) {
+            if (!incomingTax.equals(candidateTax)) {
+                log.info("ProfileMergeDecisionService - taxCode conflict → NEED_REVIEW");
+                return MergeDecision.NEED_REVIEW;
+            }
+            String incomingName  = IdentityUtils.normalizeName(data.getFullName());
+            String candidateName = IdentityUtils.normalizeName(candidate.getFullName());
+            boolean nameOk = !hasText(incomingName) || !hasText(candidateName)
+                    || IdentityUtils.calculateNameSimilarity(incomingName, candidateName) >= 75;
+            if (nameOk) {
+                log.info("ProfileMergeDecisionService - taxCode match (name ok) → AUTO_MERGE");
+                return MergeDecision.AUTO_MERGE;
+            }
+            log.info("ProfileMergeDecisionService - taxCode match but name too different → NEED_REVIEW");
+            return MergeDecision.NEED_REVIEW;
+        }
+
+        // ── Fast-path 2c: Khớp khóa duy nhất do nguồn cấp (KHL/CRM/PostID/AppUserId/Payment) ──
+        // Deterministic, nhất quán với FP1 (link sourceSystem+sourceCustomerId). KHÔNG gồm DEVICE_ID/COOKIE_ID.
+        if (matchedByUniqueTypedId(data, candidate)) {
+            log.info("ProfileMergeDecisionService - unique typed identifier match → AUTO_MERGE");
+            return MergeDecision.AUTO_MERGE;
+        }
+
+        // ── Fast-path 3: Event enrichment (PROFILE_ENRICHED) ──
+        // Event enrichment đến từ nguồn đã xác thực người dùng (app đã login, session gắn email,
+        // giao dịch gắn phone...). Với 1 candidate duy nhất và khớp deterministic phone/email
+        // (không có xung đột identityNo) → AUTO_MERGE để KHÔNG tạo profile trùng.
+        // Chỉ áp dụng cho event enrichment nên KHÔNG ảnh hưởng luồng PROFILE_CREATED/UPDATED hiện có.
+        if (isEnrichmentEvent(data)) {
+            String incomingPhone  = IdentityUtils.normalizePhone(data.getPhone());
+            String candidatePhone = IdentityUtils.normalizePhone(candidate.getPhone());
+            String incomingEmail  = IdentityUtils.normalizeEmail(data.getEmail());
+            String candidateEmail = IdentityUtils.normalizeEmail(candidate.getEmail());
+
+            boolean phoneMatch = hasText(incomingPhone) && hasText(candidatePhone)
+                    && incomingPhone.equals(candidatePhone);
+            boolean emailMatch = hasText(incomingEmail) && hasText(candidateEmail)
+                    && incomingEmail.equals(candidateEmail);
+
+            if (phoneMatch || emailMatch) {
+                log.info("ProfileMergeDecisionService - enrichment deterministic match (phone={}, email={}) → AUTO_MERGE",
+                        phoneMatch, emailMatch);
+                return MergeDecision.AUTO_MERGE;
+            }
+        }
+
         // ── Score-based path: ambiguous case (no direct match OR conflict found) ──
         ProfileMatchScoreResult scoreResult = scoreService.calculate(data, candidate);
         BigDecimal score = scoreResult.getScore();
@@ -138,5 +192,33 @@ public class ProfileMergeDecisionService {
 
     private boolean hasText(String s) {
         return StringUtils.hasText(s);
+    }
+
+    /** Event làm giàu định danh (enrichment), ví dụ PROFILE_ENRICHED từ MyVNPost/Website/PayPost. */
+    private boolean isEnrichmentEvent(NormalizedProfileData data) {
+        return "PROFILE_ENRICHED".equalsIgnoreCase(data.getEventType());
+    }
+
+    /**
+     * Kiểm tra candidate có link ACTIVE khớp CHÍNH XÁC một khóa duy nhất do nguồn cấp
+     * (KHL_CODE / CRM_ID / POST_ID / APP_USER_ID / PAYMENT_ID) với giá trị trong data.
+     * Không dùng DEVICE_ID/COOKIE_ID (để dành Probabilistic Matching, tránh false-positive).
+     */
+    private boolean matchedByUniqueTypedId(NormalizedProfileData data, MasterProfile candidate) {
+        return hasTypedLink(candidate.getId(), IdentityType.KHL_CODE,    data.getKhlCode())
+                || hasTypedLink(candidate.getId(), IdentityType.CRM_ID,     data.getCrmId())
+                || hasTypedLink(candidate.getId(), IdentityType.POST_ID,    data.getPostId())
+                || hasTypedLink(candidate.getId(), IdentityType.APP_USER_ID, data.getAppUserId())
+                || hasTypedLink(candidate.getId(), IdentityType.PAYMENT_ID,  data.getPaymentId());
+    }
+
+    private boolean hasTypedLink(Long masterProfileId, IdentityType type, String value) {
+        if (!hasText(value)) {
+            return false;
+        }
+        return identityLinkRepository
+                .findByMasterProfileIdAndIdentityTypeAndIdentityValue(masterProfileId, type.name(), value)
+                .stream()
+                .anyMatch(l -> l.getStatus() != null && l.getStatus() == 1);
     }
 }

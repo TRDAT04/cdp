@@ -7,18 +7,14 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 
 /**
  * Tab "Hành vi số".
  * <p>
- * Dữ liệu đến từ 2 nguồn:
- * <ul>
- *   <li>Apache Unomi — số liệu tổng hợp (visit, purchase, spent).</li>
- *   <li>{@code customer_events} — hành vi chi tiết (đăng nhập, đơn hàng, timeline).</li>
- * </ul>
+ * Toàn bộ dữ liệu suy diễn từ {@code customer_events} (hành vi chi tiết: đăng nhập,
+ * đơn hàng, timeline). Segment và số liệu tổng mua đã hiển thị ở tab Tổng quan/Summary.
  */
 @Getter
 @Setter
@@ -26,20 +22,6 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ProfileDigitalBehaviorResponse {
-
-    // ---- Tổng hợp từ Unomi ----
-    private List<String> segments;
-
-    private Instant firstVisit;
-    private Instant previousVisit;
-    private Instant lastVisit;
-    private Integer nbOfVisits;
-
-    private Integer purchaseCount;
-    private BigDecimal totalSpent;
-    private Instant lastTransactionDate;
-
-    // ---- Suy diễn từ customer_events ----
 
     /** Lần đăng nhập gần nhất (event {@code customerLogin}). */
     private LocalDateTime lastLoginAt;

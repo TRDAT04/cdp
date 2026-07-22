@@ -28,6 +28,7 @@ final class CustomerEventDerivations {
     static final String PROP_SERVICE_CODE = "serviceCode";
     static final String PROP_ORDER_STATUS = "orderStatus";
     static final String PROP_DEVICE = "device";
+    static final String PROP_PAYMENT_METHOD = "paymentMethod";
 
     /**
      * "Mảng dịch vụ chính": các {@code serviceCode} distinct từ event {@code createOrder},

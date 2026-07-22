@@ -33,11 +33,23 @@ public class ProfileOverviewResponse {
     /** CCCD đã che 1 phần. */
     private String identityNoMasked;
 
-    /** Post ID lấy từ identity link có sourceSystem = POSTID (nếu có). */
+    /** Mã số thuế (MST) — tách khỏi CCCD. Null nếu không có. */
+    private String taxCode;
+
+    /**
+     * Post ID (identity_type = POST_ID, fallback sourceSystem = POSTID).
+     * @deprecated dùng {@link #identities}.postId. Giữ lại để backward-compatible.
+     */
+    @Deprecated
     private String postId;
+
+    /** Toàn bộ định danh động (postId, crmId, khlCode, appUserId, deviceId, cookieId, paymentId). */
+    private ProfileIdentitiesResponse identities;
 
     private String customerType;
     private String customerTypeText;
+    /** Hạng khách hàng (VIP, FREQUENT...) — tách khỏi customerType. Null nếu không có. */
+    private String customerTier;
 
     // Bưu cục quản lý
     private String provinceCode;

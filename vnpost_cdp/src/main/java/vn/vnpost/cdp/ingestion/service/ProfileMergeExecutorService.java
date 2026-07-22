@@ -8,6 +8,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import vn.vnpost.cdp.common.utils.IdentityUtils;
 import vn.vnpost.cdp.ingestion.dto.NormalizedProfileData;
 import vn.vnpost.cdp.profile.entity.*;
+import vn.vnpost.cdp.profile.enums.IdentityType;
 import vn.vnpost.cdp.profile.event.ProfileMergedEvent;
 import vn.vnpost.cdp.profile.repository.*;
 import vn.vnpost.cdp.profile.service.ProfileMergeEngineService;
@@ -80,9 +81,11 @@ public class ProfileMergeExecutorService {
         profile.setPhone(data.getPhone());
         profile.setEmail(data.getEmail());
         profile.setIdentityNo(data.getIdentityNo());
+        profile.setTaxCode(data.getTaxCode());
         profile.setGender(data.getGender());
         profile.setDateOfBirth(data.getDateOfBirth());
         profile.setCustomerType(data.getCustomerType());
+        profile.setCustomerTier(data.getCustomerTier());
         profile.setProvinceCode(data.getProvinceCode());
         profile.setProvinceName(data.getProvinceName());
         profile.setUnitCode(data.getUnitCode());
@@ -95,8 +98,9 @@ public class ProfileMergeExecutorService {
         log.info("ProfileMergeExecutorService - created MasterProfile id={}, profileCode={}",
                 profile.getId(), profile.getProfileCode());
 
-        // 3. Create identity link
+        // 3. Create identity links (primary strong-identity + enrichment identifiers)
         createIdentityLink(profile.getId(), data, true);
+        createEnrichmentIdentityLinks(profile.getId(), data);
 
         // 4 & 5. Save attribute values (all isSelected=true for first source)
         saveAttributeValues(profile.getId(), sourceRecord.getId(), data, true);
@@ -135,6 +139,9 @@ public class ProfileMergeExecutorService {
         if (!linkedAlready) {
             createIdentityLink(targetProfile.getId(), data, false);
         }
+        // Enrichment identifiers (postId, appUserId, deviceId, ...) — luôn upsert, kể cả khi
+        // source đã được link trước đó (event enrichment mới có thể mang thêm định danh).
+        createEnrichmentIdentityLinks(targetProfile.getId(), data);
 
         // 2. Save incoming attribute values (not selected by default, selection handled below)
         saveAttributeValues(targetProfile.getId(), sourceRecord.getId(), data, false);
@@ -157,6 +164,10 @@ public class ProfileMergeExecutorService {
                 data.getDateOfBirth(), targetProfile.getDateOfBirth(), targetProfile::setDateOfBirth);
         profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data, "customerType",
                 data.getCustomerType(), targetProfile.getCustomerType(), targetProfile::setCustomerType);
+        profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data, "customerTier",
+                data.getCustomerTier(), targetProfile.getCustomerTier(), targetProfile::setCustomerTier);
+        profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data, "taxCode",
+                data.getTaxCode(), targetProfile.getTaxCode(), targetProfile::setTaxCode);
         profileUpdated |= applyFieldRule(targetProfile, sourceRecord, data, "provinceCode",
                 data.getProvinceCode(), targetProfile.getProvinceCode(),  value -> {
                     targetProfile.setProvinceCode(value);
@@ -393,33 +404,67 @@ public class ProfileMergeExecutorService {
     // =====================================================================
 
     private void createIdentityLink(Long masterProfileId, NormalizedProfileData data, boolean isPrimary) {
-        String identityType;
+        IdentityType identityType;
         String identityValue;
         BigDecimal confidence;
 
         if (StringUtils.hasText(data.getIdentityNo())) {
-            identityType = "IDENTITY_NO";
+            identityType = IdentityType.IDENTITY_NO;
             identityValue = data.getIdentityNo();
             confidence = BigDecimal.valueOf(100);
         } else if (StringUtils.hasText(data.getPhone())) {
-            identityType = "PHONE";
+            identityType = IdentityType.PHONE;
             identityValue = data.getPhone();
             confidence = BigDecimal.valueOf(90);
         } else if (StringUtils.hasText(data.getEmail())) {
-            identityType = "EMAIL";
+            identityType = IdentityType.EMAIL;
             identityValue = data.getEmail();
             confidence = BigDecimal.valueOf(80);
         } else {
-            identityType = "SOURCE_CUSTOMER_ID";
+            identityType = IdentityType.SOURCE_CUSTOMER_ID;
             identityValue = data.getSourceCustomerId();
             confidence = BigDecimal.valueOf(60);
+        }
+
+        saveIdentityLinkIfAbsent(masterProfileId, data, identityType, identityValue, confidence, isPrimary);
+    }
+
+    /**
+     * Tạo (upsert) các định danh liên nguồn từ event enrichment vào profile_identity_links.
+     * Mỗi định danh được ghi với đúng identity_type chuẩn (danh mục {@link IdentityType}).
+     * Không tạo trùng: nếu đã tồn tại link ACTIVE cùng (masterProfileId, identity_type, identity_value)
+     * thì bỏ qua — nhờ đó nhiều event từ cùng nguồn không sinh bản ghi lặp.
+     */
+    private void createEnrichmentIdentityLinks(Long masterProfileId, NormalizedProfileData data) {
+        saveIdentityLinkIfAbsent(masterProfileId, data, IdentityType.POST_ID,     data.getPostId(),     BigDecimal.valueOf(70), false);
+        saveIdentityLinkIfAbsent(masterProfileId, data, IdentityType.CRM_ID,      data.getCrmId(),      BigDecimal.valueOf(85), false);
+        saveIdentityLinkIfAbsent(masterProfileId, data, IdentityType.KHL_CODE,    data.getKhlCode(),    BigDecimal.valueOf(85), false);
+        saveIdentityLinkIfAbsent(masterProfileId, data, IdentityType.APP_USER_ID, data.getAppUserId(),  BigDecimal.valueOf(70), false);
+        saveIdentityLinkIfAbsent(masterProfileId, data, IdentityType.DEVICE_ID,   data.getDeviceId(),   BigDecimal.valueOf(50), false);
+        saveIdentityLinkIfAbsent(masterProfileId, data, IdentityType.COOKIE_ID,   data.getCookieId(),   BigDecimal.valueOf(40), false);
+        saveIdentityLinkIfAbsent(masterProfileId, data, IdentityType.PAYMENT_ID,  data.getPaymentId(),  BigDecimal.valueOf(60), false);
+    }
+
+    private void saveIdentityLinkIfAbsent(Long masterProfileId, NormalizedProfileData data,
+                                          IdentityType identityType, String identityValue,
+                                          BigDecimal confidence, boolean isPrimary) {
+        if (!StringUtils.hasText(identityValue)) {
+            return;
+        }
+        boolean exists = identityLinkRepository
+                .findByMasterProfileIdAndIdentityTypeAndIdentityValue(
+                        masterProfileId, identityType.name(), identityValue)
+                .stream()
+                .anyMatch(l -> l.getStatus() != null && l.getStatus() == 1);
+        if (exists) {
+            return;
         }
 
         ProfileIdentityLink link = new ProfileIdentityLink();
         link.setMasterProfileId(masterProfileId);
         link.setSourceSystem(data.getSourceSystem());
         link.setSourceCustomerId(data.getSourceCustomerId());
-        link.setIdentityType(identityType);
+        link.setIdentityType(identityType.name());
         link.setIdentityValue(identityValue);
         link.setConfidenceScore(confidence);
         link.setIsPrimary(isPrimary);
@@ -442,6 +487,8 @@ public class ProfileMergeExecutorService {
                 "email", data.getEmail(), isSelected, now);
         addAttributeValue(values, masterProfileId, sourceRecordId, data.getSourceSystem(),
                 "identityNo", data.getIdentityNo(), isSelected, now);
+        addAttributeValue(values, masterProfileId, sourceRecordId, data.getSourceSystem(),
+                "taxCode", data.getTaxCode(), isSelected, now);
         addAttributeValue(values, masterProfileId, sourceRecordId, data.getSourceSystem(),
                 "gender", data.getGender(), isSelected, now);
         addAttributeValue(values, masterProfileId, sourceRecordId, data.getSourceSystem(),
@@ -609,6 +656,7 @@ public class ProfileMergeExecutorService {
         addAttributeValue(values, masterProfileId, sourceRecordId, src, "phone",       data.getPhone(),       false, now);
         addAttributeValue(values, masterProfileId, sourceRecordId, src, "email",       data.getEmail(),       false, now);
         addAttributeValue(values, masterProfileId, sourceRecordId, src, "identityNo",  data.getIdentityNo(),  false, now);
+        addAttributeValue(values, masterProfileId, sourceRecordId, src, "taxCode",     data.getTaxCode(),     false, now);
         addAttributeValue(values, masterProfileId, sourceRecordId, src, "gender",      data.getGender(),      false, now);
         addAttributeValue(values, masterProfileId, sourceRecordId, src, "customerType",data.getCustomerType(),false, now);
         addAttributeValue(values, masterProfileId, sourceRecordId, src, "provinceCode",data.getProvinceCode(),false, now);
@@ -667,9 +715,11 @@ public class ProfileMergeExecutorService {
         profile.setPhone(data.getPhone());
         profile.setEmail(data.getEmail());
         profile.setIdentityNo(data.getIdentityNo());
+        profile.setTaxCode(data.getTaxCode());
         profile.setGender(data.getGender());
         profile.setDateOfBirth(data.getDateOfBirth());
         profile.setCustomerType(data.getCustomerType());
+        profile.setCustomerTier(data.getCustomerTier());
         profile.setProvinceCode(data.getProvinceCode());
         profile.setProvinceName(data.getProvinceName());
         profile.setUnitCode(data.getUnitCode());
@@ -681,8 +731,9 @@ public class ProfileMergeExecutorService {
         log.info("ProfileMergeExecutorService - createProfileForReview: saved profile id={}, profileCode={}",
                 profile.getId(), profile.getProfileCode());
 
-        // 3. Create identity link (isPrimary=true, status=1)
+        // 3. Create identity links (primary + enrichment)
         createIdentityLink(profile.getId(), data, true);
+        createEnrichmentIdentityLinks(profile.getId(), data);
 
         // 4. Save attribute values (all selected=true — these are the profile's own values)
         saveAttributeValues(profile.getId(), sourceRecord.getId(), data, true);

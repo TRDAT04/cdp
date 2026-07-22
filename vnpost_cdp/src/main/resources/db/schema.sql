@@ -9,8 +9,11 @@ CREATE TABLE IF NOT EXISTS master_profiles (
     gender VARCHAR(20),
     date_of_birth DATE,
     identity_no VARCHAR(100),
+    tax_code VARCHAR(50),
 
     customer_type VARCHAR(100),
+    customer_tier VARCHAR(50),
+    customer_group VARCHAR(50),
 
     province_code VARCHAR(50),
     province_name VARCHAR(255),
@@ -47,6 +50,9 @@ CREATE INDEX IF NOT EXISTS idx_master_profiles_email
 
 CREATE INDEX IF NOT EXISTS idx_master_profiles_identity_no
     ON master_profiles(identity_no);
+
+CREATE INDEX IF NOT EXISTS idx_master_profiles_tax_code
+    ON master_profiles(tax_code);
 
 CREATE INDEX IF NOT EXISTS idx_master_profiles_status
     ON master_profiles(status);

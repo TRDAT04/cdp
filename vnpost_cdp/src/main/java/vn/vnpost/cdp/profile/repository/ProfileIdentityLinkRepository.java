@@ -14,4 +14,6 @@ public interface ProfileIdentityLinkRepository extends JpaRepository<ProfileIden
     Optional<ProfileIdentityLink> findBySourceSystemAndSourceCustomerId(String sourceSystem, String sourceCustomerId);
     Optional<ProfileIdentityLink> findBySourceSystemAndSourceCustomerIdAndStatus(String sourceSystem, String sourceCustomerId, Short status);
     List<ProfileIdentityLink> findByIdentityTypeAndIdentityValue(String identityType, String identityValue);
+    List<ProfileIdentityLink> findByMasterProfileIdAndIdentityTypeAndIdentityValue(
+            Long masterProfileId, String identityType, String identityValue);
 }

@@ -6,6 +6,8 @@ import org.springframework.util.StringUtils;
 import vn.vnpost.cdp.customer_event.entity.CustomerEvent;
 import vn.vnpost.cdp.profile.dto.query.ProfileListItemResponse;
 import vn.vnpost.cdp.profile.entity.MasterProfile;
+import vn.vnpost.cdp.profile.entity.ProfileIdentityLink;
+import vn.vnpost.cdp.profile.enums.IdentityType;
 import vn.vnpost.cdp.unomi.dto.UnomiProfileProperties;
 import vn.vnpost.cdp.unomi.dto.UnomiProfileResponse;
 
@@ -44,7 +46,8 @@ public class ProfileListAssembler {
             String[] warning,
             List<String> sourceSystems,
             LocalDateTime lastActivityAt,
-            List<CustomerEvent> events) {
+            List<CustomerEvent> events,
+            List<ProfileIdentityLink> links) {
 
         ProfileListItemResponse.ProfileListItemResponseBuilder builder = ProfileListItemResponse.builder()
                 // ---- Dữ liệu từ PostgreSQL ----
@@ -56,7 +59,10 @@ public class ProfileListAssembler {
                 .email(profile.getEmail())
                 .customerType(profile.getCustomerType())
                 .customerTypeText(mapCustomerTypeText(profile.getCustomerType()))
+                .customerTier(profile.getCustomerTier())
                 .customerGroup(profile.getCustomerGroup())
+                .taxCode(profile.getTaxCode())
+                .khlCode(resolveKhlCode(links))
                 .warningStatus(warning[0])
                 .warningText(warning[1])
                 .sourceSystems(sourceSystems)
@@ -91,6 +97,18 @@ public class ProfileListAssembler {
     // HELPER MAPPERS (giữ nguyên logic hiện tại từ ProfileQueryServiceImpl)
     // =====================================================================
 
+    /** Mã KHL ACTIVE (identity_type = KHL_CODE); null nếu profile không phải KH lớn. */
+    private String resolveKhlCode(List<ProfileIdentityLink> links) {
+        if (CollectionUtils.isEmpty(links)) return null;
+        return links.stream()
+                .filter(l -> IdentityType.KHL_CODE.name().equalsIgnoreCase(l.getIdentityType()))
+                .filter(l -> l.getStatus() == null || l.getStatus() == 1)
+                .map(ProfileIdentityLink::getIdentityValue)
+                .filter(StringUtils::hasText)
+                .findFirst()
+                .orElse(null);
+    }
+
     private String buildAvatarText(String fullName) {
         if (!StringUtils.hasText(fullName)) return "?";
         String[] parts = fullName.trim().split("\\s+");
@@ -101,13 +119,7 @@ public class ProfileListAssembler {
     }
 
     private String mapCustomerTypeText(String type) {
-        if (type == null) return null;
-        return switch (type.toUpperCase()) {
-            case "PERSONAL", "CA_NHAN"       -> "Cá nhân";
-            case "FREQUENT", "THUONG_XUYEN"  -> "Thường xuyên";
-            case "VIP"                       -> "VIP";
-            default                          -> type;
-        };
+        return vn.vnpost.cdp.profile.enums.CustomerType.textOf(type);
     }
 
     private String mapStatusText(Short status) {

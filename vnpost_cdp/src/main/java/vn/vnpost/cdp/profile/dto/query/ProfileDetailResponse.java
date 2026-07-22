@@ -28,11 +28,18 @@ public class ProfileDetailResponse {
     private String phone;
     private String email;
     private String identityNo;
+    /** Mã số thuế (MST) — tách khỏi identityNo (CCCD). Null nếu không có. */
+    private String taxCode;
     private String gender;
     private LocalDate dateOfBirth;
 
     private String customerType;
     private String customerTypeText;
+    /** Hạng khách hàng (VIP, FREQUENT...) — tách khỏi customerType. Null nếu không có. */
+    private String customerTier;
+
+    /** Toàn bộ định danh động (postId, crmId, khlCode, appUserId, deviceId, cookieId, paymentId). */
+    private ProfileIdentitiesResponse identities;
 
     private String provinceCode;
     private String provinceName;

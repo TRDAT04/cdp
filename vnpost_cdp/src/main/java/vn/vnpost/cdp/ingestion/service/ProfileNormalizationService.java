@@ -22,8 +22,10 @@ public class ProfileNormalizationService {
         String phone = normalizePhone(getString(payload, "phone"));
         String email = normalizeEmail(getString(payload, "email"));
         String identityNo = normalizeIdentityNo(getString(payload, "identityNo"));
+        String taxCode = normalizeIdentityNo(getString(payload, "taxCode"));
         String gender = trimString(getString(payload, "gender"));
         String customerType = trimString(getString(payload, "customerType"));
+        String customerTier = trimString(getString(payload, "customerTier"));
         String provinceCode = trimString(getString(payload, "provinceCode"));
         String provinceName = trimString(getString(payload, "provinceName"));
         String unitCode = trimString(getString(payload, "unitCode"));
@@ -32,19 +34,38 @@ public class ProfileNormalizationService {
         LocalDateTime lastVisitAt = parseDateTime(getString(payload, "lastVisitAt"));
         List<String> interestedServices = extractStringList(payload, "interestedServices");
 
+        // --- Định danh liên nguồn (enrichment) ---
+        String postId = trimString(getString(payload, "postId"));
+        String crmId = trimString(getString(payload, "crmId"));
+        String khlCode = trimString(getString(payload, "khlCode"));
+        String appUserId = trimString(getString(payload, "appUserId"));
+        String deviceId = trimString(getString(payload, "deviceId"));
+        String cookieId = trimString(getString(payload, "cookieId"));
+        String paymentId = trimString(getString(payload, "paymentId"));
+
         Map<String, Object> normalizedPayload = new LinkedHashMap<>();
         putIfNotNull(normalizedPayload, "sourceSystem", message.getSourceSystem());
         putIfNotNull(normalizedPayload, "sourceCustomerId", message.getSourceCustomerId());
+        putIfNotNull(normalizedPayload, "eventType", message.getEventType());
         putIfNotNull(normalizedPayload, "fullName", fullName);
         putIfNotNull(normalizedPayload, "phone", phone);
         putIfNotNull(normalizedPayload, "email", email);
         putIfNotNull(normalizedPayload, "identityNo", identityNo);
+        putIfNotNull(normalizedPayload, "taxCode", taxCode);
         putIfNotNull(normalizedPayload, "gender", gender);
         putIfNotNull(normalizedPayload, "customerType", customerType);
+        putIfNotNull(normalizedPayload, "customerTier", customerTier);
         putIfNotNull(normalizedPayload, "provinceCode", provinceCode);
         putIfNotNull(normalizedPayload, "provinceName", provinceName);
         putIfNotNull(normalizedPayload, "unitCode", unitCode);
         putIfNotNull(normalizedPayload, "unitName", unitName);
+        putIfNotNull(normalizedPayload, "postId", postId);
+        putIfNotNull(normalizedPayload, "crmId", crmId);
+        putIfNotNull(normalizedPayload, "khlCode", khlCode);
+        putIfNotNull(normalizedPayload, "appUserId", appUserId);
+        putIfNotNull(normalizedPayload, "deviceId", deviceId);
+        putIfNotNull(normalizedPayload, "cookieId", cookieId);
+        putIfNotNull(normalizedPayload, "paymentId", paymentId);
         if (dateOfBirth != null) normalizedPayload.put("dateOfBirth", dateOfBirth.toString());
         if (lastVisitAt != null) normalizedPayload.put("lastVisitAt", lastVisitAt.toString());
         if (!interestedServices.isEmpty()) normalizedPayload.put("interestedServices", interestedServices);
@@ -52,17 +73,27 @@ public class ProfileNormalizationService {
         return NormalizedProfileData.builder()
                 .sourceSystem(message.getSourceSystem())
                 .sourceCustomerId(message.getSourceCustomerId())
+                .eventType(message.getEventType())
                 .fullName(fullName)
                 .phone(phone)
                 .email(email)
                 .identityNo(identityNo)
+                .taxCode(taxCode)
                 .gender(gender)
                 .dateOfBirth(dateOfBirth)
                 .customerType(customerType)
+                .customerTier(customerTier)
                 .provinceCode(provinceCode)
                 .provinceName(provinceName)
                 .unitCode(unitCode)
                 .unitName(unitName)
+                .postId(postId)
+                .crmId(crmId)
+                .khlCode(khlCode)
+                .appUserId(appUserId)
+                .deviceId(deviceId)
+                .cookieId(cookieId)
+                .paymentId(paymentId)
                 .interestedServices(interestedServices)
                 .lastVisitAt(lastVisitAt)
                 .normalizedPayload(normalizedPayload)

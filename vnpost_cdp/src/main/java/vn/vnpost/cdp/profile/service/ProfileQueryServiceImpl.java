@@ -145,10 +145,9 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
     @Override
     public ProfileDigitalBehaviorResponse getProfileBehavior(Long id) {
         MasterProfile profile = findProfileOrThrow(id);
-        UnomiProfileResponse unomiData = fetchUnomiData(profile);
         List<CustomerEvent> events = customerEventRepository
                 .findTop50ByMasterProfileIdOrderByOccurredAtDesc(profile.getId());
-        return profileDetailAssembler.assembleBehavior(unomiData, events);
+        return profileDetailAssembler.assembleBehavior(events);
     }
 
     @Override
@@ -159,6 +158,14 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
         ProfileUnomiSyncLog latestSync = unomiSyncLogRepository
                 .findTopByMasterProfileIdOrderBySyncedAtDesc(profileId).orElse(null);
         return profileDetailAssembler.assembleChangeLogs(logs, latestSync);
+    }
+
+    @Override
+    public ProfileServiceLinesResponse getProfileServiceLines(Long id) {
+        MasterProfile profile = findProfileOrThrow(id);
+        List<CustomerEvent> events = customerEventRepository
+                .findTop50ByMasterProfileIdOrderByOccurredAtDesc(profile.getId());
+        return profileDetailAssembler.assembleServiceLines(profile.getId(), events);
     }
 
     @Override
@@ -240,7 +247,7 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
             List<CustomerEvent> events = eventsByProfileId
                     .getOrDefault(profile.getId(), Collections.emptyList());
 
-            return profileListAssembler.assemble(profile, unomiData, warning, sourceSystems, lastActivityAt, events);
+            return profileListAssembler.assemble(profile, unomiData, warning, sourceSystems, lastActivityAt, events, links);
         });
     }
 

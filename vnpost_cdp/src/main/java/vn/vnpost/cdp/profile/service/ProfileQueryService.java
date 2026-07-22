@@ -11,6 +11,7 @@ import vn.vnpost.cdp.profile.dto.query.ProfileListItemResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileMultiSourceComparisonResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileOverviewResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileSearchRequest;
+import vn.vnpost.cdp.profile.dto.query.ProfileServiceLinesResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileSummaryResponse;
 
 import java.util.List;
@@ -26,5 +27,6 @@ public interface ProfileQueryService {
     ProfileAddressResponse getProfileAddress(Long id);                           // Tab 4
     ProfileDigitalBehaviorResponse getProfileBehavior(Long id);                  // Tab 6
     ProfileChangeLogsResponse getProfileChangeLogs(Long id);                     // Tab 10
+    ProfileServiceLinesResponse getProfileServiceLines(Long id);                 // Tab: Mảng dịch vụ
     ProfileSummaryResponse getProfileSummary(Long id);                           // Summary card
 }
