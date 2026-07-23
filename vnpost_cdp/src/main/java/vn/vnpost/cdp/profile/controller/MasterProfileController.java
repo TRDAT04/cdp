@@ -26,6 +26,7 @@ import vn.vnpost.cdp.profile.dto.query.ProfileListItemResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileSearchRequest;
 import vn.vnpost.cdp.profile.service.MasterProfileService;
 import vn.vnpost.cdp.profile.service.ProfileQueryService;
+import vn.vnpost.cdp.profile.service.ScoringService;
 
 import java.time.LocalDate;
 
@@ -36,11 +37,14 @@ public class MasterProfileController {
 
     private final MasterProfileService masterProfileService;
     private final ProfileQueryService profileQueryService;
+    private final ScoringService scoringService;
 
     public MasterProfileController(MasterProfileService masterProfileService,
-                                   ProfileQueryService profileQueryService) {
+                                   ProfileQueryService profileQueryService,
+                                   ScoringService scoringService) {
         this.masterProfileService = masterProfileService;
         this.profileQueryService = profileQueryService;
+        this.scoringService = scoringService;
     }
 
     @GetMapping("/unomi")
@@ -218,5 +222,12 @@ public class MasterProfileController {
     public ResponseEntity<MethodResult> getProfileSummary(@PathVariable Long id) {
         log.info("GET /api/v1/admin/profiles/{}/summary", id);
         return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileSummary(id)));
+    }
+
+    /** Tab: Điểm số & Phân khúc (RFM percentile / CLV / churn / engagement). */
+    @GetMapping("/{id}/scoring")
+    public ResponseEntity<MethodResult> getScoring(@PathVariable Long id) {
+        log.info("GET /api/v1/admin/profiles/{}/scoring", id);
+        return ResponseEntity.ok(MethodResult.success(scoringService.getProfileScoring(id)));
     }
 }

@@ -1,5 +1,6 @@
 package vn.vnpost.cdp.profile.service;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -28,6 +29,7 @@ import java.util.stream.Collectors;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ProfileQueryServiceImpl implements ProfileQueryService {
 
@@ -50,32 +52,7 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
     private final vn.vnpost.cdp.profile.assembler.ProfileDetailAssembler profileDetailAssembler;
     private final CustomerEventRepository customerEventRepository;
 
-    public ProfileQueryServiceImpl(
-            MasterProfileRepository masterProfileRepository,
-            ProfileIdentityLinkRepository identityLinkRepository,
-            ProfileAttributeValueRepository attributeValueRepository,
-            ProfileSourceRecordRepository sourceRecordRepository,
-            ProfileMergeConflictRepository conflictRepository,
-            ProfileMatchCandidateRepository matchCandidateRepository,
-            ProfileChangeLogRepository changeLogRepository,
-            ProfileUnomiSyncLogRepository unomiSyncLogRepository,
-            UnomiClient unomiClient,
-            ProfileListAssembler profileListAssembler,
-            vn.vnpost.cdp.profile.assembler.ProfileDetailAssembler profileDetailAssembler,
-            CustomerEventRepository customerEventRepository) {
-        this.masterProfileRepository = masterProfileRepository;
-        this.identityLinkRepository = identityLinkRepository;
-        this.attributeValueRepository = attributeValueRepository;
-        this.sourceRecordRepository = sourceRecordRepository;
-        this.conflictRepository = conflictRepository;
-        this.matchCandidateRepository = matchCandidateRepository;
-        this.changeLogRepository = changeLogRepository;
-        this.unomiSyncLogRepository = unomiSyncLogRepository;
-        this.unomiClient = unomiClient;
-        this.profileListAssembler = profileListAssembler;
-        this.profileDetailAssembler = profileDetailAssembler;
-        this.customerEventRepository = customerEventRepository;
-    }
+
 
     // =====================================================================
     // DETAIL

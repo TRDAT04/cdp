@@ -32,52 +32,5 @@ public class ProfileIngestionController {
         return ResponseEntity.ok(MethodResult.success(response));
     }
 
-    @PostMapping("/send-crm-sample")
-    public ResponseEntity<MethodResult> sendCrmSample() {
-        log.info("POST /v1/test/profile-ingestion/send-crm-sample");
-        ProfileIngestionRequest request = buildCrmSample();
-        ProfileIngestionResponse response = profileIngestionProducer.send(request);
-        return ResponseEntity.ok(MethodResult.success(response));
-    }
 
-    @PostMapping("/send-cms-sample")
-    public ResponseEntity<MethodResult> sendCmsSample() {
-        log.info("POST /v1/test/profile-ingestion/send-cms-sample");
-        ProfileIngestionRequest request = buildCmsSample();
-        ProfileIngestionResponse response = profileIngestionProducer.send(request);
-        return ResponseEntity.ok(MethodResult.success(response));
-    }
-
-    private ProfileIngestionRequest buildCrmSample() {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("fullName", "Nguyen Van A");
-        payload.put("phone", "0988888888");
-        payload.put("email", "a@gmail.com");
-        payload.put("identityNo", "0123456789");
-        payload.put("gender", "male");
-        payload.put("customerType", "PERSONAL");
-        ProfileIngestionRequest req = new ProfileIngestionRequest();
-        req.setSourceSystem("CRM");
-        req.setSourceCustomerId("CRM_SAMPLE_001");
-        req.setEventType("PROFILE_UPDATED");
-        req.setPayload(payload);
-        req.setOccurredAt(LocalDateTime.now());
-        return req;
-    }
-
-    private ProfileIngestionRequest buildCmsSample() {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("fullName", "Nguyen Van A");
-        payload.put("phone", "0988888888");
-        payload.put("email", "a@gmail.com");
-        payload.put("interestedServices", java.util.List.of("EMS", "Logistics"));
-        payload.put("lastVisitAt", LocalDateTime.now().toString());
-        ProfileIngestionRequest req = new ProfileIngestionRequest();
-        req.setSourceSystem("CMS");
-        req.setSourceCustomerId("CMS_SAMPLE_001");
-        req.setEventType("PROFILE_UPDATED");
-        req.setPayload(payload);
-        req.setOccurredAt(LocalDateTime.now());
-        return req;
-    }
 }
