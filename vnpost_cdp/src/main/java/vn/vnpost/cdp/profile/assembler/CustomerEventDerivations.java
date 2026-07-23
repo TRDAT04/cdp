@@ -27,6 +27,7 @@ final class CustomerEventDerivations {
     static final String EVENT_CAMPAIGN_RESPONSE = "campaignResponse";
     static final String EVENT_COMPLAINT_CREATED = "complaintCreated";
     static final String EVENT_COMPLAINT_RESOLVED = "complaintResolved";
+    static final String EVENT_CONSENT_UPDATED = "consentUpdated";
 
     // Khóa property theo data mẫu thật (test-data/customer-event-samples.txt)
     static final String PROP_ORDER_ID = "orderId";
@@ -43,6 +44,9 @@ final class CustomerEventDerivations {
     static final String PROP_SLA_DEADLINE = "slaDeadline";
     static final String PROP_RESOLVED_AT = "resolvedAt";
     static final String PROP_SATISFACTION_SCORE = "satisfactionScore";
+    // Consent — đồng ý dữ liệu
+    static final String PROP_PURPOSE = "purpose";
+    static final String PROP_TERMS_VERSION = "termsVersion";
 
 
     static List<String> resolveTopServiceLines(List<CustomerEvent> events, int limit) {

@@ -20,21 +20,15 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * Tính điểm số & phân khúc — tái sử dụng {@code assembleServiceLines}/{@code assembleBehavior}
- * và truy vấn RFM percentile trên toàn bộ khách hàng.
- */
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ScoringServiceImpl implements ScoringService {
 
-    /** Cửa sổ xét Frequency/Monetary (tháng) — khớp cửa sổ 12 tháng của service-lines. */
     private static final int RFM_WINDOW_MONTHS = 12;
-    /** Ngưỡng churn (ngày): daysSinceLastOrder >= 90 ⇒ churn 100. */
     private static final double CHURN_WINDOW_DAYS = 90.0;
-    /** Điểm cộng cho mỗi điều kiện engagement. */
     private static final int ENGAGEMENT_STEP = 20;
 
     private final MasterProfileRepository masterProfileRepository;
@@ -55,12 +49,13 @@ public class ScoringServiceImpl implements ScoringService {
         ProfileDigitalBehaviorResponse behavior = profileDetailAssembler.assembleBehavior(events);
 
         return ProfileScoringResponse.builder()
+                .calculatedAt(now)
                 .rfm(computeRfm(profile.getId(), now))
                 .clv(computeClv(profile.getId(), events))
                 .churnScore(computeChurnScore(behavior, now))
                 .engagementScore(computeEngagementScore(behavior, now))
-                .codRiskScore(null)   // chưa implement: chưa join được complaint ↔ order
-                .fraudScore(null)     // chưa implement: cần đối chiếu pattern nhiều khách
+                .codRiskScore(null)   
+                .fraudScore(null)     
                 .build();
     }
 

@@ -217,6 +217,13 @@ public class MasterProfileController {
         return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileCskh(id)));
     }
 
+    /** Tab: Đồng ý dữ liệu (ma trận đồng ý 3 mục đích × 4 kênh từ event consentUpdated). */
+    @GetMapping("/{id}/consent")
+    public ResponseEntity<MethodResult> getConsent(@PathVariable Long id) {
+        log.info("GET /api/v1/admin/profiles/{}/consent", id);
+        return ResponseEntity.ok(MethodResult.success(profileQueryService.getProfileConsent(id)));
+    }
+
     /** Summary card: tổng hợp nhanh thông tin profile (fullName, uid, tags, activeSystems…). */
     @GetMapping("/{id}/summary")
     public ResponseEntity<MethodResult> getProfileSummary(@PathVariable Long id) {

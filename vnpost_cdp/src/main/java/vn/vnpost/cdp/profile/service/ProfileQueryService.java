@@ -4,6 +4,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import vn.vnpost.cdp.profile.dto.query.ProfileAddressResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileChangeLogsResponse;
+import vn.vnpost.cdp.profile.dto.query.ProfileConsentResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileCskhResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileDetailResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileDigitalBehaviorResponse;
@@ -30,5 +31,6 @@ public interface ProfileQueryService {
     ProfileChangeLogsResponse getProfileChangeLogs(Long id);                     // Tab 10
     ProfileServiceLinesResponse getProfileServiceLines(Long id);                 // Tab: Mảng dịch vụ
     ProfileCskhResponse getProfileCskh(Long id);                                 // Tab: CSKH
+    ProfileConsentResponse getProfileConsent(Long id);                           // Tab: Đồng ý dữ liệu
     ProfileSummaryResponse getProfileSummary(Long id);                           // Summary card
 }

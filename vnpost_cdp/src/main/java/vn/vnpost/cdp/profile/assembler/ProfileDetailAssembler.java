@@ -1007,16 +1007,181 @@ public class ProfileDetailAssembler {
     }
 
     // =====================================================================
+    // TAB: ĐỒNG Ý DỮ LIỆU (Consent Management)
+    // =====================================================================
+
+    /** Mục đích cố định (thứ tự hiển thị) → nhãn tiếng Việt. */
+    private static final Map<String, String> CONSENT_PURPOSE_LABELS = buildConsentPurposeLabels();
+    /** Kênh cố định (thứ tự cột). */
+    private static final List<String> CONSENT_CHANNELS = List.of("SMS", "EMAIL", "ZALO_OA", "PUSH");
+    /** Mục đích nghĩa vụ dịch vụ — luôn GRANTED, không đọc từ event. */
+    private static final String CONSENT_PURPOSE_OPERATIONAL = "OPERATIONAL";
+    private static final String CONSENT_STATUS_GRANTED = "GRANTED";
+    private static final String CONSENT_STATUS_UNKNOWN = "UNKNOWN";
+
+    private static Map<String, String> buildConsentPurposeLabels() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("OPERATIONAL", "Thông báo vận hành");
+        m.put("CUSTOMER_CARE", "Chăm sóc khách hàng");
+        m.put("MARKETING", "Tiếp thị & ưu đãi");
+        return m;
+    }
+
+    /**
+     * Ma trận đồng ý từ event {@code consentUpdated} của profile (đã match vào {@code masterProfileId}).
+     * Ma trận CỐ ĐỊNH 3 mục đích × 4 kênh; với mỗi cặp (purpose, channel) chỉ lấy event MỚI NHẤT
+     * (events sort occurredAt DESC → {@code putIfAbsent} giữ bản mới nhất). OPERATIONAL hard-code GRANTED;
+     * 2 mục đích còn lại thiếu event → UNKNOWN. 3 field cấp ngoài lấy từ event consentUpdated mới nhất
+     * toàn cục; chưa có event nào → null.
+     *
+     * @param events customer_events của profile (nullable) — kỳ vọng đã sort occurredAt DESC.
+     */
+    public ProfileConsentResponse assembleConsent(List<CustomerEvent> events) {
+        // "purpose channel" -> status mới nhất (putIfAbsent giữ bản đầu tiên = mới nhất khi sort DESC)
+        Map<String, String> latestStatus = new HashMap<>();
+        CustomerEvent latestEvent = null;
+
+        if (!CollectionUtils.isEmpty(events)) {
+            for (CustomerEvent e : events) {
+                if (!CustomerEventDerivations.EVENT_CONSENT_UPDATED.equals(e.getEventType())) {
+                    continue;
+                }
+                // Event mới nhất toàn cục (bất kể purpose/channel) cho 3 field cấp ngoài
+                if (latestEvent == null || isNewer(e, latestEvent)) {
+                    latestEvent = e;
+                }
+                Map<String, Object> p = e.getProperties();
+                String purpose = CustomerEventDerivations.asString(p, CustomerEventDerivations.PROP_PURPOSE);
+                String channel = CustomerEventDerivations.asString(p, CustomerEventDerivations.PROP_CHANNEL);
+                String status = CustomerEventDerivations.asString(p, CustomerEventDerivations.PROP_STATUS);
+                if (!StringUtils.hasText(purpose) || !StringUtils.hasText(channel) || !StringUtils.hasText(status)) {
+                    continue;
+                }
+                latestStatus.putIfAbsent(consentKey(purpose, channel), status);
+            }
+        }
+
+        List<ProfileConsentResponse.ConsentRow> matrix = new ArrayList<>();
+        for (Map.Entry<String, String> purpose : CONSENT_PURPOSE_LABELS.entrySet()) {
+            boolean operational = CONSENT_PURPOSE_OPERATIONAL.equals(purpose.getKey());
+            Map<String, String> channels = new LinkedHashMap<>();
+            for (String channel : CONSENT_CHANNELS) {
+                if (operational) {
+                    channels.put(channel, CONSENT_STATUS_GRANTED); // nghĩa vụ dịch vụ, không xin đồng ý
+                } else {
+                    channels.put(channel,
+                            latestStatus.getOrDefault(consentKey(purpose.getKey(), channel), CONSENT_STATUS_UNKNOWN));
+                }
+            }
+            matrix.add(ProfileConsentResponse.ConsentRow.builder()
+                    .purpose(purpose.getKey())
+                    .purposeLabel(purpose.getValue())
+                    .channels(channels)
+                    .build());
+        }
+
+        return ProfileConsentResponse.builder()
+                .consentMatrix(matrix)
+                .collectionSource(latestEvent != null ? latestEvent.getSourceSystem() : null)
+                .lastUpdated(latestEvent != null ? latestEvent.getOccurredAt() : null)
+                .termsVersion(latestEvent != null
+                        ? CustomerEventDerivations.asString(latestEvent.getProperties(),
+                                CustomerEventDerivations.PROP_TERMS_VERSION)
+                        : null)
+                .build();
+    }
+
+    private static String consentKey(String purpose, String channel) {
+        return purpose + ' ' + channel;
+    }
+
+    /** So sánh occurredAt (null coi là cũ nhất) — không phụ thuộc hoàn toàn vào thứ tự đầu vào. */
+    private static boolean isNewer(CustomerEvent candidate, CustomerEvent current) {
+        LocalDateTime a = candidate.getOccurredAt();
+        LocalDateTime b = current.getOccurredAt();
+        if (a == null) {
+            return false;
+        }
+        if (b == null) {
+            return true;
+        }
+        return a.isAfter(b);
+    }
+
+    // =====================================================================
     // TAB 10: NHẬT KÝ
     // =====================================================================
+
+    /** mergeStrategy đánh dấu dòng tạo hồ sơ mới (lưu dạng String trong profile_change_logs). */
+    private static final String MERGE_STRATEGY_CREATE_NEW_PROFILE = "CREATE_NEW_PROFILE";
+
+    /**
+     * @param logs          change logs HIỂN THỊ (đang là top-20 DESC) — giữ nguyên như cũ.
+     * @param allLogs       TOÀN BỘ change logs của hồ sơ (DESC) — chỉ dùng để tính {@code profileSummary}
+     *                      (createdAt/createdBySystem cần dòng cũ nhất, có thể nằm ngoài top-20).
+     * @param latestSync    lần sync Unomi gần nhất (nullable).
+     * @param sourceSystems DISTINCT sourceSystem của hồ sơ — tái sử dụng logic Overview/Detail
+     *                      ({@code resolveSourceSystems}), KHÔNG suy từ changeLogs (phạm vi hẹp hơn).
+     */
     public ProfileChangeLogsResponse assembleChangeLogs(
-            List<ProfileChangeLog> logs, ProfileUnomiSyncLog latestSync) {
+            List<ProfileChangeLog> logs, List<ProfileChangeLog> allLogs,
+            ProfileUnomiSyncLog latestSync, List<String> sourceSystems) {
         return ProfileChangeLogsResponse.builder()
-                .changeLogs(CollectionUtils.isEmpty(logs)
-                        ? Collections.emptyList()
-                        : logs.stream().map(this::toChangeLogResponse).collect(Collectors.toList()))
-                .latestUnomiSync(latestSync != null ? toUnomiSyncResponse(latestSync) : null)
+//                .changeLogs(CollectionUtils.isEmpty(logs)
+//                        ? Collections.emptyList()
+//                        : logs.stream().map(this::toChangeLogResponse).collect(Collectors.toList()))
+//                .latestUnomiSync(latestSync != null ? toUnomiSyncResponse(latestSync) : null)
+                .profileSummary(buildProfileSummary(allLogs, latestSync, sourceSystems))
                 .build();
+    }
+
+    /**
+     * Tóm tắt vòng đời hồ sơ từ toàn bộ change logs + lần sync gần nhất. {@code sourceSystems} được
+     * truyền vào (tái sử dụng logic Overview/Detail). Hồ sơ chưa có change log nào → createdAt/
+     * createdBySystem null, lastUpdatedAt = syncedAt (nếu có).
+     */
+    private ProfileChangeLogsResponse.ProfileSummary buildProfileSummary(
+            List<ProfileChangeLog> allLogs, ProfileUnomiSyncLog latestSync, List<String> sourceSystems) {
+        List<ProfileChangeLog> safeLogs = CollectionUtils.isEmpty(allLogs) ? List.of() : allLogs;
+
+        // createdAt = MIN(changedAt) của dòng CREATE_NEW_PROFILE
+        LocalDateTime createdAt = safeLogs.stream()
+                .filter(l -> MERGE_STRATEGY_CREATE_NEW_PROFILE.equals(l.getMergeStrategy()))
+                .map(ProfileChangeLog::getChangedAt)
+                .filter(java.util.Objects::nonNull)
+                .min(LocalDateTime::compareTo)
+                .orElse(null);
+
+        // createdBySystem = newSource của dòng có changedAt sớm nhất
+        String createdBySystem = safeLogs.stream()
+                .filter(l -> l.getChangedAt() != null)
+                .min(java.util.Comparator.comparing(ProfileChangeLog::getChangedAt))
+                .map(ProfileChangeLog::getNewSource)
+                .orElse(null);
+
+        // lastUpdatedAt = MAX(MAX(changedAt), syncedAt)
+        LocalDateTime maxChangedAt = safeLogs.stream()
+                .map(ProfileChangeLog::getChangedAt)
+                .filter(java.util.Objects::nonNull)
+                .max(LocalDateTime::compareTo)
+                .orElse(null);
+        LocalDateTime syncedAt = latestSync != null ? latestSync.getSyncedAt() : null;
+        LocalDateTime lastUpdatedAt = maxOf(maxChangedAt, syncedAt);
+
+        return ProfileChangeLogsResponse.ProfileSummary.builder()
+                .sourceSystems(sourceSystems)
+                .createdAt(createdAt)
+                .lastUpdatedAt(lastUpdatedAt)
+                .profileVersion(null) // master_profiles chưa có cột version/@Version
+                .createdBySystem(createdBySystem)
+                .build();
+    }
+
+    /** MAX của 2 thời điểm, bỏ qua null; cả hai null → null. */
+    private static LocalDateTime maxOf(LocalDateTime a, LocalDateTime b) {
+        if (a == null) return b;
+        if (b == null) return a;
+        return a.isAfter(b) ? a : b;
     }
 
     // =====================================================================

@@ -134,9 +134,13 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
         MasterProfile profile = findProfileOrThrow(id);
         Long profileId = profile.getId();
         List<ProfileChangeLog> logs = changeLogRepository.findTop20ByMasterProfileIdOrderByChangedAtDesc(profileId);
+        // Toàn bộ lịch sử — dùng cho profileSummary (createdAt/createdBySystem cần dòng cũ nhất).
+        List<ProfileChangeLog> allLogs = changeLogRepository.findByMasterProfileIdOrderByChangedAtDesc(profileId);
         ProfileUnomiSyncLog latestSync = unomiSyncLogRepository
                 .findTopByMasterProfileIdOrderBySyncedAtDesc(profileId).orElse(null);
-        return profileDetailAssembler.assembleChangeLogs(logs, latestSync);
+        // sourceSystems: tái sử dụng đúng logic Overview/Detail (DISTINCT sourceSystem của hồ sơ).
+        List<String> sourceSystems = resolveSourceSystems(profileId, null);
+        return profileDetailAssembler.assembleChangeLogs(logs, allLogs, latestSync, sourceSystems);
     }
 
     @Override
@@ -153,6 +157,15 @@ public class ProfileQueryServiceImpl implements ProfileQueryService {
         List<CustomerEvent> events = customerEventRepository
                 .findTop50ByMasterProfileIdOrderByOccurredAtDesc(profile.getId());
         return profileDetailAssembler.assembleCskh(events);
+    }
+
+    @Override
+    public vn.vnpost.cdp.profile.dto.query.ProfileConsentResponse getProfileConsent(Long id) {
+        MasterProfile profile = findProfileOrThrow(id);
+        // Lấy TOÀN BỘ event để không bỏ sót cặp (purpose, channel) cũ khi tính bản mới nhất.
+        List<CustomerEvent> events = customerEventRepository
+                .findByMasterProfileIdOrderByOccurredAtDesc(profile.getId());
+        return profileDetailAssembler.assembleConsent(events);
     }
 
     @Override
