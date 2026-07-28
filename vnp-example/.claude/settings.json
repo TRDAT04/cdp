@@ -1,0 +1,47 @@
+{
+  "project": {
+    "name": "vnp-example",
+    "language": "java",
+    "java_version": "21",
+    "framework": "spring-boot-4.0.2",
+    "build_tool": "maven",
+    "package_base": "vn.vnpost.example",
+    "shared_lib": "vn.vnpost:vnpshared:4.0.0",
+    "database": "postgresql",
+    "cache": "redis",
+    "auth": "oauth2-jwt-keycloak",
+    "port": 9000,
+    "docs": "docs/DEVELOPMENT_GUIDE.md"
+  },
+  "defaults": {
+    "read_claude_md_first": true,
+    "prefer_small_incremental_changes": true,
+    "require_test_plan_before_major_edits": true,
+    "require_api_check_for_endpoint_changes": true,
+    "require_db_check_for_migrations": true,
+    "require_security_check_for_auth_changes": true
+  },
+  "hooks": {
+    "pre-commit": [".claude/hooks/pre-commit-review.md"],
+    "pre-edit-java": [".claude/hooks/pre-implement.md", ".claude/hooks/endpoint-change-check.md", ".claude/hooks/security-change-check.md"],
+    "post-edit-java": [".claude/hooks/post-edit-java.md"],
+    "pre-edit-sql": [".claude/hooks/migration-safety.md"]
+  },
+  "suggested_commands": [
+    "implement-endpoint",
+    "fix-bug",
+    "review-pr",
+    "add-migration",
+    "write-tests",
+    "refactor-safe"
+  ],
+  "suggested_agents": [
+    "code-reviewer",
+    "test-writer",
+    "security-reviewer",
+    "db-reviewer",
+    "api-designer",
+    "performance-reviewer",
+    "integration-tester"
+  ]
+}
