@@ -2,6 +2,7 @@ package vn.vnpost.cdp.customer_event.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -13,6 +14,18 @@ import java.util.List;
 
 @Repository
 public interface CustomerEventRepository extends JpaRepository<CustomerEvent, Long>, JpaSpecificationExecutor<CustomerEvent> {
+
+    /**
+     * Chuyển toàn bộ event từ profile bị merge (source) sang profile còn lại (target).
+     *
+     * <p>Bắt buộc khi merge hồ sơ: mọi tab tra cứu event (Hành vi số, Dòng dịch vụ, CSKH,
+     * Consent, Summary) đều query thẳng theo {@code master_profile_id} và KHÔNG đi theo
+     * {@code merged_into_profile_id}. Nếu không re-point, event của source vẫn nằm trong DB
+     * nhưng không còn xuất hiện ở bất kỳ hồ sơ nào.
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("update CustomerEvent e set e.masterProfileId = :targetId where e.masterProfileId = :sourceId")
+    int reassignMasterProfile(@Param("sourceId") Long sourceId, @Param("targetId") Long targetId);
 
     /**
      * 50 event gần nhất của một profile, mới nhất trước — dùng cho tab Hành vi số (detail).

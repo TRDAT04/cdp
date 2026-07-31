@@ -2,6 +2,7 @@ package vn.vnpost.cdp.profile.enums;
 
 public enum ProfileMatchReasonType {
     IDENTITY_NO_MATCH,
+    TAX_CODE_MATCH,
     PHONE_MATCH,
     EMAIL_MATCH,
     NAME_EXACT_MATCH,
@@ -12,6 +13,7 @@ public enum ProfileMatchReasonType {
     SOURCE_CUSTOMER_LINK,
     BEHAVIOR_MATCH,
     IDENTITY_CONFLICT,
+    TAX_CODE_CONFLICT,
     PHONE_CONFLICT,
     EMAIL_CONFLICT
 }

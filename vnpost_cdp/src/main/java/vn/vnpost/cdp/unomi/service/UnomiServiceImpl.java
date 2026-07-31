@@ -46,6 +46,9 @@ public class UnomiServiceImpl implements UnomiService {
         properties.put("unitCode", profile.getUnitCode());
         properties.put("unitName", profile.getUnitName());
         properties.put("status", profile.getStatus());
+        // Hồ sơ đã bị gộp: Unomi không có API delete nên giữ bản ghi nhưng đánh dấu rõ để
+        // segment/campaign loại trừ, tránh đếm trùng một khách hàng thành hai.
+        properties.put("mergedIntoProfileId", profile.getMergedIntoProfileId());
         properties.put(
                 "createdAt",
                 profile.getCreated()

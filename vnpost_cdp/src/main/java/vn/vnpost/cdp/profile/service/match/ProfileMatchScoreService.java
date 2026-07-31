@@ -20,6 +20,7 @@ import vn.vnpost.cdp.ingestion.dto.NormalizedProfileData;
 public class ProfileMatchScoreService {
 
     private static final int SCORE_IDENTITY_NO = 50;
+    private static final int SCORE_TAX_CODE = 50;
     private static final int SCORE_PHONE = 40;
     private static final int SCORE_EMAIL = 35;
     private static final int SCORE_NAME_EXACT = 30;
@@ -33,28 +34,30 @@ public class ProfileMatchScoreService {
 
     public ProfileMatchScoreResult calculate(MasterProfile left, MasterProfile right) {
         return calculateCore(
-                left.getIdentityNo(), left.getPhone(), left.getEmail(), left.getFullName(), left.getDateOfBirth() != null ? left.getDateOfBirth().toString() : null, left.getProvinceCode(), left.getUnitCode(), left.getId().toString(),
-                right.getIdentityNo(), right.getPhone(), right.getEmail(), right.getFullName(), right.getDateOfBirth() != null ? right.getDateOfBirth().toString() : null, right.getProvinceCode(), right.getUnitCode(), right.getId().toString()
+                left.getIdentityNo(), left.getTaxCode(), left.getPhone(), left.getEmail(), left.getFullName(), left.getDateOfBirth() != null ? left.getDateOfBirth().toString() : null, left.getProvinceCode(), left.getUnitCode(), left.getId().toString(),
+                right.getIdentityNo(), right.getTaxCode(), right.getPhone(), right.getEmail(), right.getFullName(), right.getDateOfBirth() != null ? right.getDateOfBirth().toString() : null, right.getProvinceCode(), right.getUnitCode(), right.getId().toString()
         );
     }
 
     public ProfileMatchScoreResult calculate(NormalizedProfileData left, MasterProfile right) {
         return calculateCore(
-                left.getIdentityNo(), left.getPhone(), left.getEmail(), left.getFullName(), left.getDateOfBirth() != null ? left.getDateOfBirth().toString() : null, left.getProvinceCode(), left.getUnitCode(), "incoming",
-                right.getIdentityNo(), right.getPhone(), right.getEmail(), right.getFullName(), right.getDateOfBirth() != null ? right.getDateOfBirth().toString() : null, right.getProvinceCode(), right.getUnitCode(), right.getId().toString()
+                left.getIdentityNo(), left.getTaxCode(), left.getPhone(), left.getEmail(), left.getFullName(), left.getDateOfBirth() != null ? left.getDateOfBirth().toString() : null, left.getProvinceCode(), left.getUnitCode(), "incoming",
+                right.getIdentityNo(), right.getTaxCode(), right.getPhone(), right.getEmail(), right.getFullName(), right.getDateOfBirth() != null ? right.getDateOfBirth().toString() : null, right.getProvinceCode(), right.getUnitCode(), right.getId().toString()
         );
     }
 
     private ProfileMatchScoreResult calculateCore(
-            String leftIdNo, String leftPh, String leftEm, String leftFn, String leftDob, String leftProv, String leftUnit, String leftLogId,
-            String rightIdNo, String rightPh, String rightEm, String rightFn, String rightDob, String rightProv, String rightUnit, String rightLogId) {
-        
+            String leftIdNo, String leftTax, String leftPh, String leftEm, String leftFn, String leftDob, String leftProv, String leftUnit, String leftLogId,
+            String rightIdNo, String rightTax, String rightPh, String rightEm, String rightFn, String rightDob, String rightProv, String rightUnit, String rightLogId) {
+
         List<ProfileMatchReasonCreateItem> reasons = new ArrayList<>();
         int rawScore = 0;
         boolean identityConflict = false;
 
         String leftIdentityNo  = IdentityUtils.normalizeText(leftIdNo);
         String rightIdentityNo = IdentityUtils.normalizeText(rightIdNo);
+        String leftTaxCode     = IdentityUtils.normalizeText(leftTax);
+        String rightTaxCode    = IdentityUtils.normalizeText(rightTax);
         String leftPhone       = IdentityUtils.normalizePhone(leftPh);
         String rightPhone      = IdentityUtils.normalizePhone(rightPh);
         String leftEmail       = IdentityUtils.normalizeEmail(leftEm);
@@ -72,6 +75,21 @@ public class ProfileMatchScoreService {
                 identityConflict = true;
                 reasons.add(reason("IDENTITY_CONFLICT", "Identity numbers differ",
                         leftIdNo, rightIdNo, 0));
+            }
+        }
+
+        // 1b. Tax code — với khách doanh nghiệp, MST là định danh mạnh ngang CCCD của cá nhân.
+        // Hai MST khác nhau nghĩa là hai pháp nhân khác nhau, nên coi như identity conflict:
+        // chặn auto-merge và đẩy sang NEED_REVIEW đúng như trường hợp CCCD lệch.
+        if (StringUtils.hasText(leftTaxCode) && StringUtils.hasText(rightTaxCode)) {
+            if (leftTaxCode.equals(rightTaxCode)) {
+                rawScore += SCORE_TAX_CODE;
+                reasons.add(reason("TAX_CODE_MATCH", "Tax code matched",
+                        leftTax, rightTax, SCORE_TAX_CODE));
+            } else {
+                identityConflict = true;
+                reasons.add(reason("TAX_CODE_CONFLICT", "Tax codes differ",
+                        leftTax, rightTax, 0));
             }
         }
 

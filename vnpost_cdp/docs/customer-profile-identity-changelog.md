@@ -33,7 +33,8 @@
 ## 3. CHƯA làm / để lại cho sau
 - **#9 SĐT+Email (non-enrichment):** giữ CREATE_MATCH_CANDIDATE (review), **chưa** auto-merge. Lý do: chưa có field "vai trò khách hàng" để check xung đột → mở lại sau khi có field vai trò.
 - **DEVICE_ID / COOKIE_ID:** cố ý loại khỏi auto-merge → để dành **Probabilistic Matching** (chưa trong scope).
-- **FP2b/FP2c cho luồng admin dedup** (`ProfileMatchCandidateServiceImpl`): **chưa** áp dụng, mới chỉ ở ingestion. (Chờ xác nhận.)
+- ~~**FP2b/FP2c cho luồng admin dedup** (`ProfileMatchCandidateServiceImpl`): **chưa** áp dụng, mới chỉ ở ingestion. (Chờ xác nhận.)~~
+  → **2026-07-31:** đã áp **FP2 (CCCD) + FP2b (MST)** cho admin dedup qua `resolveMatch()`; **FP2c (typed id KHL/CRM/Post/AppUser/Payment) vẫn CHƯA**. Chi tiết: `docs/profile-ingestion-data-flow.md` mục 4.
 - **Test:** chưa viết (project chưa có `src/test`; E2E 4-event cần Testcontainers).
 - **Build:** chưa chạy `mvn compile` (máy không có maven) — cần verify trước commit.
 
@@ -44,7 +45,7 @@
 
 ## 5. Việc cần làm tiếp (ưu tiên giảm dần)
 1. Chạy `mvn compile` + fix nếu lỗi, rồi chạy migration trên UAT.
-2. Chốt việc áp FP2b/FP2c cho admin dedup hay không.
+2. ~~Chốt việc áp FP2b/FP2c cho admin dedup hay không.~~ → đã chốt & làm FP2/FP2b (2026-07-31); còn lại FP2c.
 3. FE cập nhật theo response/danh mục mới; nguồn cập nhật eventType + payload.
 4. Bổ sung test (unit decision + normalization) khi có hạ tầng.
 5. Sau khi có field "vai trò KH" → mở lại auto-merge cho #9.

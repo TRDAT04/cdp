@@ -2,6 +2,9 @@ package vn.vnpost.cdp.profile.controller;
 
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import vn.vnpost.cdp.common.response.MethodResult;
@@ -29,12 +32,23 @@ public class ProfileMatchCandidateController {
         return ResponseEntity.ok(MethodResult.success(candidateService.search(request)));
     }
 
+
     /**
-     * GET /v1/admin/profile-match-candidates/pending
+     * GET /v1/admin/profile-match-candidates/grouped-pending
+     * Màn "Đối soát định danh": mỗi dòng là một hồ sơ gốc kèm số mã chờ xác nhận,
+     * tin cậy cao nhất và khoá khớp nổi bật. Optional filter: keyword. Có phân trang.
      */
-    @GetMapping("/pending")
-    public ResponseEntity<MethodResult> listPending() {
-        return ResponseEntity.ok(MethodResult.success(candidateService.listPending()));
+    @GetMapping("/grouped-pending")
+    public ResponseEntity<MethodResult> groupedPending(
+            @ModelAttribute ProfileMatchGroupSearchRequest request,
+            @PageableDefault(size = 20) Pageable pageable) {
+
+        log.info("GET /api/v1/admin/profile-match-candidates/grouped-pending - keyword={}, page={}, size={}",
+                request.getKeyword(), pageable.getPageNumber(), pageable.getPageSize());
+
+        Page<ProfileMatchGroupResponse> result = candidateService.searchPendingGroups(request, pageable);
+
+        return ResponseEntity.ok(MethodResult.success(result.getContent(), result.getTotalElements()));
     }
 
     /**

@@ -1,7 +1,6 @@
 ﻿@echo off
 
-docker build -f Dockerfile -t 172.20.0.70:5000/java/vnp-example-api:1.8 .
-docker push 172.20.0.70:5000/java/vnp-example-api:1.8
-
+docker build -f Dockerfile -t trdat04/cdp-backend-api:2.6 .
+docker push trdat04/cdp-backend-api:2.6
 
 pause

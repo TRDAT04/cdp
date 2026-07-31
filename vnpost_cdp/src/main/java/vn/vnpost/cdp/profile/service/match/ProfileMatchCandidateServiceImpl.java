@@ -2,21 +2,30 @@ package vn.vnpost.cdp.profile.service.match;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import vn.vnpost.cdp.ingestion.dto.NormalizedProfileData;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import vn.vnpost.cdp.common.exception.BusinessException;
+import vn.vnpost.cdp.common.utils.IdentityUtils;
+import vn.vnpost.cdp.customer_event.repository.CustomerEventRepository;
 import vn.vnpost.cdp.profile.dto.match.*;
 import vn.vnpost.cdp.profile.entity.*;
+import vn.vnpost.cdp.profile.enums.CustomerType;
 import vn.vnpost.cdp.profile.repository.*;
 import vn.vnpost.cdp.security.SecurityUtils;
 import vn.vnpost.cdp.unomi.service.UnomiService;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -35,6 +44,20 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     private static final short PROFILE_MERGED  = 3;
     private static final short PROFILE_DELETED = 5;
 
+    /** Dưới ngưỡng này thì nhóm được đánh dấu "tin cậy thấp" để UI cảnh báo. */
+    private static final BigDecimal LOW_CONFIDENCE_THRESHOLD = BigDecimal.valueOf(60);
+
+    /**
+     * Điểm gán cho cặp khớp khóa mạnh (deterministic). Cố tình KHÔNG dùng 100 để phân biệt với
+     * trường hợp điểm cộng dồn (additive) bị cap về 100 — nhìn score là biết candidate đến từ
+     * nhánh nào. CCCD cao hơn MST vì là định danh cá nhân duy nhất, còn MST có thể bị dùng chung.
+     */
+    private static final BigDecimal DETERMINISTIC_SCORE_IDENTITY = BigDecimal.valueOf(98);
+    private static final BigDecimal DETERMINISTIC_SCORE_TAX      = BigDecimal.valueOf(96);
+
+    /** Ngưỡng tên "không lệch quá xa", nhất quán với scorer và ProfileMergeDecisionService. */
+    private static final double NAME_SIMILARITY_MIN = 75;
+
     private static final List<String> SOURCE_PRIORITY = List.of("CRM", "MYVNPOST", "PORTAL", "CMS");
 
     private final ProfileMatchCandidateRepository candidateRepository;
@@ -45,6 +68,9 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     private final ProfileChangeLogRepository changeLogRepository;
     private final ProfileMergeRequestRepository mergeRequestRepository;
     private final ProfileUnomiSyncLogRepository unomiSyncLogRepository;
+    private final ProfileSourceRecordRepository sourceRecordRepository;
+    private final ProfileMergeConflictRepository conflictRepository;
+    private final CustomerEventRepository customerEventRepository;
     private final ProfileMatchScoreService scoreService;
     private final UnomiService unomiService;
     private final ObjectMapper objectMapper;
@@ -58,6 +84,9 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
             ProfileChangeLogRepository changeLogRepository,
             ProfileMergeRequestRepository mergeRequestRepository,
             ProfileUnomiSyncLogRepository unomiSyncLogRepository,
+            ProfileSourceRecordRepository sourceRecordRepository,
+            ProfileMergeConflictRepository conflictRepository,
+            CustomerEventRepository customerEventRepository,
             ProfileMatchScoreService scoreService,
             UnomiService unomiService,
             ObjectMapper objectMapper) {
@@ -69,6 +98,9 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         this.changeLogRepository = changeLogRepository;
         this.mergeRequestRepository = mergeRequestRepository;
         this.unomiSyncLogRepository = unomiSyncLogRepository;
+        this.sourceRecordRepository = sourceRecordRepository;
+        this.conflictRepository = conflictRepository;
+        this.customerEventRepository = customerEventRepository;
         this.scoreService = scoreService;
         this.unomiService = unomiService;
         this.objectMapper = objectMapper;
@@ -86,7 +118,7 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         MasterProfile left  = loadActiveProfile(leftId);
         MasterProfile right = loadActiveProfile(rightId);
 
-        ProfileMatchScoreResult scoreResult = scoreService.calculate(left, right);
+        ProfileMatchScoreResult scoreResult = resolveMatch(left, right);
         BigDecimal newScore = scoreResult.getScore();
 
         if (newScore.compareTo(BigDecimal.valueOf(70)) < 0) {
@@ -163,6 +195,26 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
             if (req.getToDate() != null) {
                 predicates.add(cb.lessThanOrEqualTo(root.get("created"), req.getToDate()));
             }
+            if (StringUtils.hasText(req.getKeyword())) {
+                // ProfileMatchCandidate chỉ giữ id thô (không có association sang MasterProfile)
+                // nên không join được — dùng EXISTS subquery khớp keyword vào một trong hai vế.
+                String kw = "%" + req.getKeyword().trim().toLowerCase() + "%";
+                Subquery<Long> sub = query.subquery(Long.class);
+                Root<MasterProfile> mp = sub.from(MasterProfile.class);
+                sub.select(mp.get("id")).where(cb.and(
+                        cb.or(
+                                cb.equal(mp.get("id"), root.get("leftMasterProfileId")),
+                                cb.equal(mp.get("id"), root.get("rightMasterProfileId"))
+                        ),
+                        cb.or(
+                                cb.like(cb.lower(mp.get("fullName")),    kw),
+                                cb.like(cb.lower(mp.get("profileCode")), kw),
+                                cb.like(cb.lower(mp.get("phone")),       kw),
+                                cb.like(cb.lower(mp.get("taxCode")),     kw)
+                        )
+                ));
+                predicates.add(cb.exists(sub));
+            }
             query.orderBy(cb.desc(root.get("matchScore")), cb.desc(root.get("created")));
             return cb.and(predicates.toArray(new Predicate[0]));
         };
@@ -172,15 +224,99 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     }
 
     // =====================================================================
-    // LIST
+    // GROUPED PENDING — màn "Đối soát định danh"
     // =====================================================================
 
     @Override
     @Transactional(readOnly = true)
-    public List<ProfileMatchCandidateResponse> listPending() {
-        return candidateRepository.findByStatusOrderByMatchScoreDescCreatedDesc(STATUS_PENDING)
-                .stream().map(this::toResponseWithLookup).collect(Collectors.toList());
+    public Page<ProfileMatchGroupResponse> searchPendingGroups(ProfileMatchGroupSearchRequest req,
+                                                               Pageable pageable) {
+        String keyword = StringUtils.hasText(req.getKeyword())
+                ? "%" + req.getKeyword().trim() + "%"
+                : null;
+
+        long total = candidateRepository.countPendingGroups(keyword);
+        if (total == 0) {
+            log.info("ProfileMatchCandidateServiceImpl - searchPendingGroups: keyword={}, no pending group", keyword);
+            return new PageImpl<>(List.of(), pageable, 0);
+        }
+
+        List<Object[]> rows = candidateRepository.findPendingGroups(
+                keyword, pageable.getPageSize(), pageable.getOffset());
+
+        List<ProfileMatchGroupResponse> content = rows.stream()
+                .map(this::toGroupResponse)
+                .collect(Collectors.toList());
+
+        // Khoá khớp chỉ nạp cho các hồ sơ của TRANG hiện tại — một query phụ, không phụ thuộc
+        // tổng số candidate trong DB.
+        attachMatchedKeys(content);
+
+        log.info("ProfileMatchCandidateServiceImpl - searchPendingGroups: keyword={}, page={}, size={}, "
+                        + "returned={}, totalGroups={}",
+                keyword, pageable.getPageNumber(), pageable.getPageSize(), content.size(), total);
+
+        return new PageImpl<>(content, pageable, total);
     }
+
+    /**
+     * Map một dòng aggregate: {@code [id, profile_code, full_name, customer_type, phone, tax_code,
+     * identity_no, pending_count, max_score, min_score]}.
+     */
+    private ProfileMatchGroupResponse toGroupResponse(Object[] row) {
+        String customerType = asString(row[3]);
+        BigDecimal maxScore = asBigDecimal(row[8]);
+        BigDecimal minScore = asBigDecimal(row[9]);
+
+        return ProfileMatchGroupResponse.builder()
+                .masterProfileId(asLong(row[0]))
+                .profileCode(asString(row[1]))
+                .fullName(asString(row[2]))
+                .customerType(customerType)
+                .customerTypeText(CustomerType.textOf(customerType))
+                .phone(asString(row[4]))
+                .taxCode(asString(row[5]))
+                .identityNo(asString(row[6]))
+                .pendingCount(asLong(row[7]))
+                .maxScore(maxScore)
+                .maxScorePercent(formatPercent(maxScore))
+                .maxMatchLevel(resolveMatchLevel(maxScore))
+                .maxMatchLevelText(matchLevelText(resolveMatchLevel(maxScore)))
+                .matchedKeys(new ArrayList<>())
+                .matchedKeysText(new ArrayList<>())
+                .hasLowConfidence(minScore != null
+                        && minScore.compareTo(LOW_CONFIDENCE_THRESHOLD) < 0)
+                .build();
+    }
+
+    private void attachMatchedKeys(List<ProfileMatchGroupResponse> groups) {
+        if (groups.isEmpty()) {
+            return;
+        }
+        List<Long> profileIds = groups.stream()
+                .map(ProfileMatchGroupResponse::getMasterProfileId)
+                .collect(Collectors.toList());
+
+        Map<Long, List<String>> byProfile = new HashMap<>();
+        for (Object[] row : candidateRepository.findMatchedReasonTypes(profileIds)) {
+            byProfile.computeIfAbsent(asLong(row[0]), k -> new ArrayList<>()).add(asString(row[1]));
+        }
+
+        for (ProfileMatchGroupResponse g : groups) {
+            List<String> keys = byProfile.getOrDefault(g.getMasterProfileId(), List.of());
+            g.setMatchedKeys(new ArrayList<>(keys));
+            g.setMatchedKeysText(keys.stream()
+                    .map(this::reasonTypeText)
+                    .distinct()
+                    .collect(Collectors.toList()));
+        }
+    }
+
+    // =====================================================================
+    // LIST
+    // =====================================================================
+
+
 
     @Override
     @Transactional(readOnly = true)
@@ -234,8 +370,11 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         ProfileMatchCandidate candidate = loadCandidate(id);
         validatePending(candidate);
 
-        MasterProfile left  = loadProfile(candidate.getLeftMasterProfileId());
-        MasterProfile right = loadProfile(candidate.getRightMasterProfileId());
+        // Bắt buộc cả hai vế còn ACTIVE: một merge khác (chạy trước) có thể đã biến 1 trong 2
+        // hồ sơ thành MERGED/DELETED. Nếu vẫn cho merge tiếp sẽ tạo chuỗi merge chồng chéo và
+        // ghi đè mergedIntoProfileId sai.
+        MasterProfile left  = loadActiveProfile(candidate.getLeftMasterProfileId());
+        MasterProfile right = loadActiveProfile(candidate.getRightMasterProfileId());
 
         // Determine target and source
         MasterProfile target;
@@ -281,6 +420,12 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         // 9. Copy attribute values
         copyAttributeValues(source.getId(), target.getId());
 
+        // 9b. Re-point dữ liệu tham chiếu source sang target. Các tab tra cứu đều query thẳng
+        // theo masterProfileId (không đi theo mergedIntoProfileId), nên nếu bỏ bước này thì
+        // event / source record / conflict của source tồn tại trong DB nhưng không còn hiển thị
+        // ở bất kỳ hồ sơ nào sau merge.
+        reassignReferencedData(source.getId(), target.getId());
+
         // 10. Update source profile
         source.setStatus((short) PROFILE_MERGED);
         source.setMergedIntoProfileId(target.getId());
@@ -313,8 +458,16 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         candidate.setMergeRequestId(mergeReq.getId());
         candidateRepository.save(candidate);
 
+        // 12b. Vô hiệu hoá các candidate PENDING khác còn trỏ tới source (profile vừa "chết").
+        expireStaleCandidatesForMergedProfile(source.getId(), id, actor, now);
+
         // 13. Sync target to Unomi
         syncToUnomi(target, "MERGE");
+
+        // 13b. Đẩy cả source lên Unomi để bên đó biết hồ sơ này đã MERGED (status + mergedIntoProfileId).
+        // Unomi không có API delete trong UnomiClient, nên đây là cách tránh đếm trùng khách hàng
+        // ở segment/campaign mà không cần đổi contract phía Unomi.
+        syncToUnomi(source, "MERGE_SOURCE");
 
         log.info("ProfileMatchCandidateServiceImpl - MERGED candidate id={}, source={}, target={}",
                 id, source.getId(), target.getId());
@@ -430,6 +583,14 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
                     .filter(p -> !p.getId().equals(masterProfileId))
                     .ifPresent(p -> candidateProfileIds.add(p.getId()));
         }
+        // MST phải có trong pool, nếu không nhánh deterministic MST của resolveMatch() không bao giờ
+        // được kích hoạt từ luồng detect: hai hồ sơ doanh nghiệp trùng MST nhưng khác
+        // CCCD/SĐT/email sẽ không bao giờ được ghép cặp để so.
+        if (StringUtils.hasText(profile.getTaxCode())) {
+            masterProfileRepository.findByTaxCode(profile.getTaxCode())
+                    .filter(p -> !p.getId().equals(masterProfileId))
+                    .ifPresent(p -> candidateProfileIds.add(p.getId()));
+        }
         if (StringUtils.hasText(profile.getPhone())) {
             masterProfileRepository.findByPhone(profile.getPhone())
                     .filter(p -> !p.getId().equals(masterProfileId))
@@ -456,7 +617,7 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
                     continue;
                 }
 
-                ProfileMatchScoreResult scoreResult = scoreService.calculate(profile, candidateProfile);
+                ProfileMatchScoreResult scoreResult = resolveMatch(profile, candidateProfile);
                 if (scoreResult.getScore().compareTo(BigDecimal.valueOf(70)) < 0) {
                     log.debug("ProfileMatchCandidateServiceImpl - score {} too low for pair ({},{})",
                             scoreResult.getScore(), masterProfileId, candidateProfileId);
@@ -507,6 +668,107 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     // =====================================================================
     // PRIVATE HELPERS
     // =====================================================================
+
+    /**
+     * Deterministic-first matching cho luồng ADMIN, mirror đúng thứ tự đã có sẵn ở
+     * {@code ProfileMergeDecisionService} của luồng ingestion: CCCD → MST → probabilistic.
+     *
+     * <p>Lý do tồn tại: {@link ProfileMatchScoreService} chỉ cộng dồn điểm, nên hai hồ sơ trùng
+     * CCCD (hoặc trùng MST) hoàn toàn chỉ được 50/100 — không đạt ngưỡng auto-merge và bị xếp
+     * ngang một cặp chỉ trùng vài tín hiệu yếu. Khóa mạnh trùng khớp là bằng chứng deterministic
+     * nên điểm được nâng thẳng lên {@link #DETERMINISTIC_SCORE_IDENTITY} /
+     * {@link #DETERMINISTIC_SCORE_TAX}.
+     *
+     * <p>Danh sách reason của scorer được GIỮ NGUYÊN (không rút còn một dòng): màn đối chiếu cần
+     * thấy đủ bằng chứng, và {@code matchedKeys} ở màn nhóm lấy trực tiếp từ bảng reason nên rút
+     * bớt sẽ làm mất khoá khớp trên UI.
+     *
+     * <p>Nhánh XUNG ĐỘT khóa mạnh cố tình KHÔNG tự đặt điểm: trả nguyên kết quả probabilistic, vì
+     * scorer đã set {@code identityConflict=true} khiến {@code autoMergeRecommended} luôn false,
+     * đồng thời giữ đúng hành vi hiện tại của ngưỡng 70 — cặp khác CCCD chỉ vô tình trùng SĐT vẫn
+     * không sinh candidate nhiễu.
+     */
+    private ProfileMatchScoreResult resolveMatch(MasterProfile left, MasterProfile right) {
+        ProfileMatchScoreResult scoreResult = scoreService.calculate(left, right);
+
+        // 1. CCCD — khóa mạnh nhất, ưu tiên tuyệt đối trên MST: khớp hay lệch CCCD đều là quyết
+        // định cuối, không xét MST nữa (giống ingestion).
+        String leftIdentityNo  = IdentityUtils.normalizeText(left.getIdentityNo());
+        String rightIdentityNo = IdentityUtils.normalizeText(right.getIdentityNo());
+        if (StringUtils.hasText(leftIdentityNo) && StringUtils.hasText(rightIdentityNo)) {
+            if (!leftIdentityNo.equals(rightIdentityNo)) {
+                log.info("ProfileMatchCandidateServiceImpl - resolveMatch pair ({},{}): identityNo conflict "
+                                + "→ giữ điểm probabilistic score={}, autoMerge={}",
+                        left.getId(), right.getId(), scoreResult.getScore(),
+                        scoreResult.isAutoMergeRecommended());
+                return scoreResult;
+            }
+            return promoteDeterministic(scoreResult, DETERMINISTIC_SCORE_IDENTITY,
+                    "identityNo match", left, right);
+        }
+
+        // 2. MST — định danh mạnh của khách doanh nghiệp. Chỉ xét khi không so được CCCD.
+        String leftTaxCode  = IdentityUtils.normalizeText(left.getTaxCode());
+        String rightTaxCode = IdentityUtils.normalizeText(right.getTaxCode());
+        if (StringUtils.hasText(leftTaxCode) && StringUtils.hasText(rightTaxCode)) {
+            if (!leftTaxCode.equals(rightTaxCode)) {
+                log.info("ProfileMatchCandidateServiceImpl - resolveMatch pair ({},{}): taxCode conflict "
+                                + "→ giữ điểm probabilistic score={}, autoMerge={}",
+                        left.getId(), right.getId(), scoreResult.getScore(),
+                        scoreResult.isAutoMergeRecommended());
+                return scoreResult;
+            }
+            if (nameCompatible(left.getFullName(), right.getFullName())) {
+                return promoteDeterministic(scoreResult, DETERMINISTIC_SCORE_TAX,
+                        "taxCode match (name ok)", left, right);
+            }
+            // Khớp MST nhưng tên lệch xa: rất có thể là hai nhân viên khai chung MST/SĐT/email
+            // công ty. Điểm cộng dồn (MST 50 + SĐT 40 + email 35) tự vượt 95 nên phải chặn tay,
+            // mirror NEED_REVIEW của ingestion.
+            scoreResult.setAutoMergeRecommended(false);
+            log.info("ProfileMatchCandidateServiceImpl - resolveMatch pair ({},{}): taxCode match nhưng tên "
+                            + "lệch > 25% → chặn auto-merge, score={}",
+                    left.getId(), right.getId(), scoreResult.getScore());
+            return scoreResult;
+        }
+
+        // 3. Không có khóa mạnh nào so được cả hai bên → probabilistic thuần như trước.
+        return scoreResult;
+    }
+
+    /**
+     * Nâng kết quả probabilistic thành kết quả deterministic: ghi đè score / matchLevel /
+     * autoMergeRecommended, giữ nguyên reasons và cờ identityConflict.
+     */
+    private ProfileMatchScoreResult promoteDeterministic(ProfileMatchScoreResult scoreResult,
+                                                        BigDecimal deterministicScore,
+                                                        String rule,
+                                                        MasterProfile left, MasterProfile right) {
+        scoreResult.setScore(deterministicScore.setScale(2, RoundingMode.HALF_UP));
+        scoreResult.setMatchLevel(resolveMatchLevel(scoreResult.getScore()));
+        // Khóa mạnh CÒN LẠI vẫn có thể lệch (trùng CCCD nhưng khác MST). Giữ nguyên cờ
+        // identityConflict của scorer và không đề xuất auto-merge trong trường hợp đó — thận trọng
+        // hơn ingestion một bậc, vì merge chưa có cơ chế hoàn tác.
+        scoreResult.setAutoMergeRecommended(!scoreResult.isIdentityConflict());
+        log.info("ProfileMatchCandidateServiceImpl - resolveMatch pair ({},{}): deterministic {} "
+                        + "→ score={}, level={}, autoMerge={}, conflict={}",
+                left.getId(), right.getId(), rule, scoreResult.getScore(), scoreResult.getMatchLevel(),
+                scoreResult.isAutoMergeRecommended(), scoreResult.isIdentityConflict());
+        return scoreResult;
+    }
+
+    /**
+     * Tên hai bên "không lệch quá xa" theo đúng ngưỡng {@link #NAME_SIMILARITY_MIN} đang dùng ở
+     * scorer và ingestion. Thiếu tên ở một bên thì coi như đạt — không có cơ sở để phủ định khóa mạnh.
+     */
+    private boolean nameCompatible(String leftName, String rightName) {
+        String l = IdentityUtils.normalizeName(leftName);
+        String r = IdentityUtils.normalizeName(rightName);
+        if (!StringUtils.hasText(l) || !StringUtils.hasText(r)) {
+            return true;
+        }
+        return IdentityUtils.calculateNameSimilarity(l, r) >= NAME_SIMILARITY_MIN;
+    }
 
     /**
      * Core persist: saves ProfileMatchCandidate + ProfileMatchReason rows.
@@ -690,6 +952,47 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         }
     }
 
+    /**
+     * Chuyển các bảng tham chiếu tới source sang target: customer_events, profile_source_records,
+     * profile_merge_conflicts. Dùng bulk update (không load entity) vì số dòng event có thể lớn.
+     */
+    private void reassignReferencedData(Long sourceId, Long targetId) {
+        int events = customerEventRepository.reassignMasterProfile(sourceId, targetId);
+        int records = sourceRecordRepository.reassignMasterProfile(sourceId, targetId);
+        int conflicts = conflictRepository.reassignMasterProfile(sourceId, targetId);
+        log.info("ProfileMatchCandidateServiceImpl - re-pointed source={} -> target={}: "
+                        + "events={}, sourceRecords={}, conflicts={}",
+                sourceId, targetId, events, records, conflicts);
+    }
+
+    /**
+     * Đánh EXPIRED cho các candidate PENDING khác còn tham chiếu tới hồ sơ vừa bị merge.
+     * Không re-point sang target vì matchScore của chúng được tính trên dữ liệu của source
+     * (đã lỗi thời) và có thể trùng với candidate PENDING đã tồn tại của target. Cặp trùng thật
+     * sẽ được {@link #detectAndCreateCandidatesForProfile(Long)} tạo lại với score tính đúng —
+     * trạng thái EXPIRED không chặn việc tạo lại (khác IGNORED/REJECTED).
+     */
+    private void expireStaleCandidatesForMergedProfile(Long mergedProfileId, Long currentCandidateId,
+                                                       String actor, LocalDateTime now) {
+        List<ProfileMatchCandidate> stale = candidateRepository
+                .findByProfileIdAndStatus(mergedProfileId, STATUS_PENDING)
+                .stream()
+                .filter(c -> !c.getId().equals(currentCandidateId))
+                .collect(Collectors.toList());
+
+        if (stale.isEmpty()) {
+            return;
+        }
+        for (ProfileMatchCandidate c : stale) {
+            c.setStatus(STATUS_EXPIRED);
+            c.setDecisionBy(actor);
+            c.setDecisionAt(now);
+        }
+        candidateRepository.saveAll(stale);
+        log.info("ProfileMatchCandidateServiceImpl - expired {} stale PENDING candidate(s) referencing "
+                + "merged profile {}", stale.size(), mergedProfileId);
+    }
+
     private void syncToUnomi(MasterProfile profile, String syncType) {
         ProfileUnomiSyncLog syncLog = new ProfileUnomiSyncLog();
         syncLog.setMasterProfileId(profile.getId());
@@ -791,11 +1094,17 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
                 .phone(p.getPhone())
                 .email(p.getEmail())
                 .identityNo(p.getIdentityNo())
+                .taxCode(p.getTaxCode())
+                .dateOfBirth(p.getDateOfBirth())
+                .gender(p.getGender())
                 .customerType(p.getCustomerType())
+                .customerTypeText(CustomerType.textOf(p.getCustomerType()))
                 .provinceCode(p.getProvinceCode())
                 .provinceName(p.getProvinceName())
                 .unitCode(p.getUnitCode())
                 .unitName(p.getUnitName())
+                .profileStatus(p.getStatus())
+                .profileStatusText(profileStatusText(p.getStatus()))
                 .build();
     }
 
@@ -803,6 +1112,7 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         return ProfileMatchReasonResponse.builder()
                 .id(r.getId())
                 .reasonType(r.getReasonType())
+                .reasonTypeText(reasonTypeText(r.getReasonType()))
                 .reasonMessage(r.getReasonMessage())
                 .leftValue(r.getLeftValue())
                 .rightValue(r.getRightValue())
@@ -836,6 +1146,64 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
             case 4  -> "Hết hạn";
             default -> String.valueOf(s);
         };
+    }
+
+    /** Trạng thái của master profile — khác bảng mã status của candidate ở {@link #statusText}. */
+    private String profileStatusText(Short s) {
+        if (s == null) return "";
+        return switch (s) {
+            case 1  -> "Đang hoạt động";
+            case 2  -> "Ngừng hoạt động";
+            case 3  -> "Đã gộp";
+            case 4  -> "Bị khoá";
+            case 5  -> "Đã xoá";
+            default -> String.valueOf(s);
+        };
+    }
+
+    /** Nhãn hiển thị của khoá khớp trên UI. */
+    private String reasonTypeText(String reasonType) {
+        if (reasonType == null) return "";
+        return switch (reasonType) {
+            case "IDENTITY_NO_MATCH"   -> "CCCD/CMND";
+            case "IDENTITY_CONFLICT"   -> "CCCD/CMND lệch";
+            case "TAX_CODE_MATCH"      -> "MST";
+            case "TAX_CODE_CONFLICT"   -> "MST lệch";
+            case "PHONE_MATCH"         -> "SĐT";
+            case "PHONE_CONFLICT"      -> "SĐT lệch";
+            case "EMAIL_MATCH"         -> "Email";
+            case "EMAIL_CONFLICT"      -> "Email lệch";
+            case "NAME_EXACT_MATCH"    -> "Tên trùng khớp";
+            case "NAME_SIMILAR"        -> "Tên gần đúng";
+            case "DATE_OF_BIRTH_MATCH" -> "Ngày sinh";
+            case "PROVINCE_MATCH"      -> "Tỉnh/TP";
+            case "UNIT_MATCH"          -> "Bưu cục";
+            default                    -> reasonType;
+        };
+    }
+
+    /** Cùng thang với {@code ProfileMatchScoreService.resolveMatchLevel} để badge trên 2 màn khớp nhau. */
+    private String resolveMatchLevel(BigDecimal score) {
+        if (score == null) return "LOW";
+        if (score.compareTo(BigDecimal.valueOf(95)) >= 0) return "VERY_HIGH";
+        if (score.compareTo(BigDecimal.valueOf(85)) >= 0) return "HIGH";
+        if (score.compareTo(BigDecimal.valueOf(70)) >= 0) return "MEDIUM";
+        return "LOW";
+    }
+
+    // ---- Ép kiểu cột của native query (JDBC driver có thể trả Integer/BigInteger/Long) ----
+
+    private Long asLong(Object v) {
+        return v == null ? null : ((Number) v).longValue();
+    }
+
+    private BigDecimal asBigDecimal(Object v) {
+        if (v == null) return null;
+        return v instanceof BigDecimal bd ? bd : BigDecimal.valueOf(((Number) v).doubleValue());
+    }
+
+    private String asString(Object v) {
+        return v == null ? null : v.toString();
     }
 
 }
