@@ -5,7 +5,6 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 import org.springframework.stereotype.Repository;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 import vn.vnpost.example.profile.entity.ProfileIdentityLink;
 
 @Repository
@@ -17,10 +16,15 @@ public interface ProfileIdentityLinkRepository extends ReactiveCrudRepository<Pr
 
     Flux<ProfileIdentityLink> findByIdentityTypeAndIdentityValue(String identityType, String identityValue);
 
-    Mono<ProfileIdentityLink> findBySourceSystemAndSourceCustomerId(String sourceSystem, String sourceCustomerId);
+    // Trả Flux, không Mono: profile_identity_links KHÔNG có unique constraint trên
+    // (source_system, source_customer_id). Sau mỗi lần admin merge, copyIdentityLinks() để lại
+    // link cũ status=3 (MERGED) trên hồ sơ nguồn VÀ tạo link mới status=1 trên hồ sơ đích — tức là
+    // 2 dòng cùng (source_system, source_customer_id). Mono sẽ ném
+    // IncorrectResultSizeDataAccessException ở lần ingest tiếp theo của chính source customer đó.
+    Flux<ProfileIdentityLink> findBySourceSystemAndSourceCustomerId(String sourceSystem, String sourceCustomerId);
 
-    Mono<ProfileIdentityLink> findBySourceSystemAndSourceCustomerIdAndStatus(String sourceSystem,
-                                                                              String sourceCustomerId, Short status);
+    Flux<ProfileIdentityLink> findBySourceSystemAndSourceCustomerIdAndStatus(String sourceSystem,
+                                                                            String sourceCustomerId, Short status);
 
     Flux<ProfileIdentityLink> findByMasterProfileIdAndIdentityTypeAndIdentityValue(
             Long masterProfileId, String identityType, String identityValue);

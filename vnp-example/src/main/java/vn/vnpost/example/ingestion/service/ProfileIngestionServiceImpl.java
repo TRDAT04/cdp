@@ -6,6 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
+import vn.vnpost.example.ingestion.dto.MergeDecisionResult;
 import vn.vnpost.example.ingestion.dto.NormalizedProfileData;
 import vn.vnpost.example.ingestion.dto.ProfileIngestionMessage;
 import vn.vnpost.example.ingestion.enums.MergeDecision;
@@ -106,12 +107,16 @@ public class ProfileIngestionServiceImpl implements ProfileIngestionService {
 
                     // 5. Decide merge strategy
                     return mergeDecisionService.decide(normalizedData, candidates)
-                            .flatMap(decision -> {
-                                log.info("ProfileIngestionServiceImpl - merge decision={} for messageId={}",
-                                        decision, message.getMessageId());
+                            .flatMap(decisionResult -> {
+                                MergeDecision decision = decisionResult.decision();
+                                log.info("ProfileIngestionServiceImpl - merge decision={} targetProfileId={} " +
+                                                "for messageId={}",
+                                        decision,
+                                        decisionResult.target() != null ? decisionResult.target().getId() : null,
+                                        message.getMessageId());
 
                                 // 6. Execute merge
-                                return executeDecision(decision, sourceRecord, normalizedData, candidates, message)
+                                return executeDecision(decisionResult, sourceRecord, normalizedData, candidates, message)
                                         .doOnSuccess(v -> log.info("ProfileIngestionServiceImpl - completed " +
                                                         "processing messageId={}, decision={}",
                                                 message.getMessageId(), decision));
@@ -119,9 +124,10 @@ public class ProfileIngestionServiceImpl implements ProfileIngestionService {
                 });
     }
 
-    private Mono<Void> executeDecision(MergeDecision decision, ProfileSourceRecord sourceRecord,
+    private Mono<Void> executeDecision(MergeDecisionResult decisionResult, ProfileSourceRecord sourceRecord,
                                         NormalizedProfileData normalizedData, List<MasterProfile> candidates,
                                         ProfileIngestionMessage message) {
+        MergeDecision decision = decisionResult.decision();
         return switch (decision) {
             case CREATE_NEW_PROFILE -> {
                 log.info("ProfileIngestionServiceImpl - creating new profile for messageId={}", message.getMessageId());
@@ -130,7 +136,9 @@ public class ProfileIngestionServiceImpl implements ProfileIngestionService {
                         .then();
             }
             case AUTO_MERGE -> {
-                MasterProfile target = candidates.get(0);
+                // Phải dùng target do decide() chọn, KHÔNG phải candidates.get(0): khi có nhiều
+                // candidate, decide() tách bằng khóa mạnh và hồ sơ được chọn có thể ở index khác.
+                MasterProfile target = decisionResult.target();
                 log.info("ProfileIngestionServiceImpl - auto-merging with profileId={} for messageId={}",
                         target.getId(), message.getMessageId());
                 yield mergeExecutorService.autoMerge(sourceRecord, normalizedData, target)
@@ -145,11 +153,12 @@ public class ProfileIngestionServiceImpl implements ProfileIngestionService {
             case NEED_REVIEW -> {
                 log.info("ProfileIngestionServiceImpl - field-level NEED_REVIEW for messageId={}",
                         message.getMessageId());
-                yield mergeExecutorService.createFieldLevelNeedReview(sourceRecord, normalizedData, candidates.get(0));
+                yield mergeExecutorService.createFieldLevelNeedReview(sourceRecord, normalizedData,
+                        decisionResult.target());
             }
             case CREATE_MATCH_CANDIDATE -> {
                 log.info("ProfileIngestionServiceImpl - CREATE_MATCH_CANDIDATE for messageId={}", message.getMessageId());
-                MasterProfile existingProfile = candidates.get(0);
+                MasterProfile existingProfile = decisionResult.target();
                 yield mergeExecutorService.createProfileForReview(sourceRecord, normalizedData)
                         .flatMap(newProfile -> matchCandidateService.createCandidateBetweenProfiles(
                                         existingProfile.getId(), newProfile.getId(), normalizedData, sourceRecord)
@@ -237,12 +246,21 @@ public class ProfileIngestionServiceImpl implements ProfileIngestionService {
     }
 
     private String buildRejectReason(NormalizedProfileData data) {
+        // Giữ đúng bộ khóa mà ProfileMergeDecisionService.hasUsableIdentity() dùng để REJECT,
+        // nếu không thông báo lỗi sẽ chỉ ra sai nguyên nhân.
         boolean hasIdentity = StringUtils.hasText(data.getIdentityNo())
                 || StringUtils.hasText(data.getPhone())
                 || StringUtils.hasText(data.getEmail())
-                || StringUtils.hasText(data.getSourceCustomerId());
+                || StringUtils.hasText(data.getSourceCustomerId())
+                || StringUtils.hasText(data.getTaxCode())
+                || StringUtils.hasText(data.getPostId())
+                || StringUtils.hasText(data.getKhlCode())
+                || StringUtils.hasText(data.getCrmId())
+                || StringUtils.hasText(data.getAppUserId())
+                || StringUtils.hasText(data.getPaymentId());
         if (!hasIdentity) {
-            return "No usable identity fields (identityNo, phone, email, sourceCustomerId are all blank)";
+            return "No usable identity fields (identityNo, phone, email, sourceCustomerId, taxCode, "
+                    + "postId, khlCode, crmId, appUserId, paymentId are all blank)";
         }
         return "Unknown or invalid source system: " + data.getSourceSystem();
     }

@@ -106,15 +106,25 @@ public class CustomerEventServiceImpl implements CustomerEventService {
         Mono<Optional<MasterProfile>> profileMono = profileSourceRecordRepository
                 .findFirstBySourceSystemAndSourceCustomerIdOrderByReceivedAtDesc(
                         message.getSourceSystem(), message.getSourceCustomerId())
-                .flatMap(sourceRecord -> masterProfileRepository.findById(sourceRecord.getMasterProfileId())
-                        .map(Optional::of)
-                        .defaultIfEmpty(Optional.empty())
-                        .doOnNext(opt -> {
-                            if (opt.isEmpty()) {
-                                log.warn("CustomerEventService - masterProfileId={} referenced by sourceRecord " +
-                                        "not found, treating as UNMATCHED", sourceRecord.getMasterProfileId());
-                            }
-                        }))
+                .flatMap(sourceRecord -> {
+                    if (sourceRecord.getMasterProfileId() == null) {
+                        // Nhánh CONFLICT/REJECT của luồng ingest để masterProfileId = null. Không chặn
+                        // null ở đây thì findById(null) ném lỗi, consumer bắt exception rồi vẫn
+                        // acknowledge() → event MẤT HẲN, không có cả dòng UNMATCHED để truy lại.
+                        log.warn("CustomerEventService - sourceRecord id={} chưa gắn masterProfileId " +
+                                "(ingest ra CONFLICT/REJECT), treating as UNMATCHED", sourceRecord.getId());
+                        return Mono.just(Optional.<MasterProfile>empty());
+                    }
+                    return masterProfileRepository.findById(sourceRecord.getMasterProfileId())
+                            .map(Optional::of)
+                            .defaultIfEmpty(Optional.empty())
+                            .doOnNext(opt -> {
+                                if (opt.isEmpty()) {
+                                    log.warn("CustomerEventService - masterProfileId={} referenced by sourceRecord " +
+                                            "not found, treating as UNMATCHED", sourceRecord.getMasterProfileId());
+                                }
+                            });
+                })
                 .defaultIfEmpty(Optional.empty());
 
         return profileMono.flatMap(profileOpt -> {

@@ -9,6 +9,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import tools.jackson.databind.ObjectMapper;
 import vn.vnpost.example.common.exception.BusinessException;
+import vn.vnpost.example.common.utils.IdentityUtils;
 import vn.vnpost.example.ingestion.dto.NormalizedProfileData;
 import vn.vnpost.example.profile.dto.match.ProfileCandidateMergeRequest;
 import vn.vnpost.example.profile.dto.match.ProfileMatchCandidateResponse;
@@ -42,6 +43,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -63,6 +66,40 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
 
     private static final short PROFILE_MERGED  = 3;
     private static final short PROFILE_DELETED = 5;
+
+    // Mọi con số dưới đây định nghĩa ở IdentityMatchThresholds — nơi duy nhất, vì API bảng rule
+    // cũng đọc từ đó. Xem Javadoc của lớp ấy để biết lý do chọn từng mốc.
+
+    private static final BigDecimal DETERMINISTIC_SCORE_IDENTITY =
+            BigDecimal.valueOf(IdentityMatchThresholds.DETERMINISTIC_IDENTITY_NO);
+    private static final BigDecimal DETERMINISTIC_SCORE_TAX =
+            BigDecimal.valueOf(IdentityMatchThresholds.DETERMINISTIC_TAX_CODE);
+    private static final BigDecimal DETERMINISTIC_SCORE_TYPED_ID =
+            BigDecimal.valueOf(IdentityMatchThresholds.DETERMINISTIC_TYPED_ID);
+
+    /** Các loại identity_link được coi là khóa duy nhất do nguồn cấp — KHÔNG gồm DEVICE_ID/COOKIE_ID
+     *  (để dành cho Probabilistic Matching sau này, tránh false-positive khi auto-merge). */
+    private static final List<String> UNIQUE_TYPED_IDENTITY_TYPES =
+            IdentityMatchThresholds.UNIQUE_TYPED_IDENTITY_TYPES;
+
+    /** Ngưỡng tên "không lệch quá xa", nhất quán với scorer và ProfileMergeDecisionService. */
+    private static final double NAME_SIMILARITY_MIN = IdentityMatchThresholds.NAME_SIMILARITY_MIN;
+
+    /**
+     * Sàn tạo candidate. Dưới ngưỡng này, match quá yếu (VD chỉ khớp tên, 30đ) không đủ cơ sở để
+     * gợi ý — nhất là với tên tiếng Việt vốn rất dễ trùng lặp (VD "Nguyễn Văn A"), sẽ sinh nhiễu.
+     * 35 vẫn bắt được "chỉ SĐT trùng" (40đ) và "chỉ email trùng" (35đ) làm gợi ý tin cậy thấp thay
+     * vì bị âm thầm bỏ qua như trước.
+     */
+    private static final BigDecimal MIN_CANDIDATE_SCORE =
+            BigDecimal.valueOf(IdentityMatchThresholds.LOW_CONFIDENCE_SCORE);
+
+    /** Một giá trị khóa khớp nhiều hơn ngưỡng này thì coi như khóa rác, không dùng để ghép cặp. */
+    private static final int MAX_PROFILES_PER_KEY = IdentityMatchThresholds.MAX_PROFILES_PER_KEY;
+
+    /** Candidate từng bị IGNORED/REJECTED chỉ được tạo lại nếu điểm mới cao hơn ít nhất mức này. */
+    private static final BigDecimal MIN_SCORE_IMPROVEMENT =
+            BigDecimal.valueOf(IdentityMatchThresholds.RECREATE_SCORE_IMPROVEMENT);
 
     private static final List<String> SOURCE_PRIORITY = List.of("CRM", "MYVNPOST", "PORTAL", "CMS");
 
@@ -127,44 +164,46 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         }
 
         return Mono.zip(loadActiveProfile(leftId), loadActiveProfile(rightId))
-                .flatMap(t -> {
-                    MasterProfile left = t.getT1();
-                    MasterProfile right = t.getT2();
+                .flatMap(t -> resolveMatch(t.getT1(), t.getT2())
+                        .flatMap(scoreResult -> createCandidateWithScore(t.getT1(), t.getT2(), scoreResult)));
+    }
 
-                    ProfileMatchScoreResult scoreResult = scoreService.calculate(left, right);
-                    BigDecimal newScore = scoreResult.getScore();
+    private Mono<ProfileMatchCandidateResponse> createCandidateWithScore(MasterProfile left, MasterProfile right,
+                                                                        ProfileMatchScoreResult scoreResult) {
+        Long leftId = left.getId();
+        Long rightId = right.getId();
+        BigDecimal newScore = scoreResult.getScore();
 
-                    if (newScore.compareTo(BigDecimal.valueOf(70)) < 0) {
-                        return Mono.error(new BusinessException("SCORE_TOO_LOW",
-                                "Match score is too low to create a candidate"));
+        if (newScore.compareTo(MIN_CANDIDATE_SCORE) < 0) {
+            return Mono.error(new BusinessException("SCORE_TOO_LOW",
+                    "Match score is too low to create a candidate"));
+        }
+
+        return findExistingCandidate(leftId, rightId)
+                .flatMap(existing -> {
+                    short existingStatus = existing.getStatus();
+
+                    if (existingStatus == STATUS_PENDING || existingStatus == STATUS_MERGED) {
+                        return reasonRepository.findByMatchCandidateId(existing.getId())
+                                .collectList()
+                                .map(reasons -> toResponse(existing, left, right, reasons));
                     }
 
-                    return findExistingCandidate(leftId, rightId)
-                            .flatMap(existing -> {
-                                short existingStatus = existing.getStatus();
+                    if (existingStatus == STATUS_IGNORED || existingStatus == STATUS_REJECTED) {
+                        BigDecimal diff = newScore.subtract(existing.getMatchScore());
+                        if (diff.compareTo(MIN_SCORE_IMPROVEMENT) < 0) {
+                            return Mono.error(new BusinessException("SCORE_NOT_IMPROVED",
+                                    "New score must be at least " + MIN_SCORE_IMPROVEMENT
+                                            + " points higher than previous ignored/rejected candidate to recreate"));
+                        }
+                        existing.setStatus(STATUS_EXPIRED);
+                        return candidateRepository.save(existing)
+                                .then(createAndRespond(left, right, scoreResult));
+                    }
 
-                                if (existingStatus == STATUS_PENDING || existingStatus == STATUS_MERGED) {
-                                    return reasonRepository.findByMatchCandidateId(existing.getId())
-                                            .collectList()
-                                            .map(reasons -> toResponse(existing, left, right, reasons));
-                                }
-
-                                if (existingStatus == STATUS_IGNORED || existingStatus == STATUS_REJECTED) {
-                                    BigDecimal diff = newScore.subtract(existing.getMatchScore());
-                                    if (diff.compareTo(BigDecimal.TEN) < 0) {
-                                        return Mono.error(new BusinessException("SCORE_NOT_IMPROVED",
-                                                "New score must be at least 10 points higher than previous " +
-                                                        "ignored/rejected candidate to recreate"));
-                                    }
-                                    existing.setStatus(STATUS_EXPIRED);
-                                    return candidateRepository.save(existing)
-                                            .then(createAndRespond(left, right, scoreResult));
-                                }
-
-                                return createAndRespond(left, right, scoreResult);
-                            })
-                            .switchIfEmpty(Mono.defer(() -> createAndRespond(left, right, scoreResult)));
-                });
+                    return createAndRespond(left, right, scoreResult);
+                })
+                .switchIfEmpty(Mono.defer(() -> createAndRespond(left, right, scoreResult)));
     }
 
     private Mono<ProfileMatchCandidateResponse> createAndRespond(MasterProfile left, MasterProfile right,
@@ -639,30 +678,73 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     }
 
     private Mono<Set<Long>> buildCandidatePoolIds(MasterProfile profile) {
-        Mono<Optional<Long>> byIdentityNo = StringUtils.hasText(profile.getIdentityNo())
-                ? optional(masterProfileRepository.findByIdentityNo(profile.getIdentityNo())
-                        .map(MasterProfile::getId)
-                        .filter(id -> !id.equals(profile.getId())))
-                : Mono.just(Optional.empty());
-        Mono<Optional<Long>> byPhone = StringUtils.hasText(profile.getPhone())
-                ? optional(masterProfileRepository.findByPhone(profile.getPhone())
-                        .map(MasterProfile::getId)
-                        .filter(id -> !id.equals(profile.getId())))
-                : Mono.just(Optional.empty());
-        Mono<Optional<Long>> byEmail = StringUtils.hasText(profile.getEmail())
-                ? optional(masterProfileRepository.findByEmail(profile.getEmail())
-                        .map(MasterProfile::getId)
-                        .filter(id -> !id.equals(profile.getId())))
-                : Mono.just(Optional.empty());
+        Long selfId = profile.getId();
 
-        return Mono.zip(byIdentityNo, byPhone, byEmail)
+        Mono<List<Long>> byIdentityNo = StringUtils.hasText(profile.getIdentityNo())
+                ? poolByKey(masterProfileRepository.findByIdentityNo(profile.getIdentityNo()), selfId, "CCCD")
+                : Mono.just(List.of());
+        // MST phải có trong pool, nếu không nhánh deterministic MST của resolveMatch() không bao giờ
+        // được kích hoạt từ luồng detect: hai hồ sơ doanh nghiệp trùng MST nhưng khác
+        // CCCD/SĐT/email sẽ không bao giờ được ghép cặp để so.
+        Mono<List<Long>> byTaxCode = StringUtils.hasText(profile.getTaxCode())
+                ? poolByKey(masterProfileRepository.findByTaxCode(profile.getTaxCode()), selfId, "MST")
+                : Mono.just(List.of());
+        Mono<List<Long>> byPhone = StringUtils.hasText(profile.getPhone())
+                ? poolByKey(masterProfileRepository.findByPhone(profile.getPhone()), selfId, "SĐT")
+                : Mono.just(List.of());
+        Mono<List<Long>> byEmail = StringUtils.hasText(profile.getEmail())
+                ? poolByKey(masterProfileRepository.findByEmail(profile.getEmail()), selfId, "email")
+                : Mono.just(List.of());
+
+        return Mono.zip(byIdentityNo, byTaxCode, byPhone, byEmail, poolByTypedLinks(selfId))
                 .map(t -> {
                     Set<Long> ids = new LinkedHashSet<>();
-                    t.getT1().ifPresent(ids::add);
-                    t.getT2().ifPresent(ids::add);
-                    t.getT3().ifPresent(ids::add);
+                    ids.addAll(t.getT1());
+                    ids.addAll(t.getT2());
+                    ids.addAll(t.getT3());
+                    ids.addAll(t.getT4());
+                    ids.addAll(t.getT5());
                     return ids;
                 });
+    }
+
+    /**
+     * Id của các hồ sơ tìm được theo một khóa, bỏ chính hồ sơ đang xét.
+     *
+     * <p>Nếu một giá trị khóa khớp quá nhiều hồ sơ thì nó không còn tính phân biệt — thực tế là SĐT
+     * rác / hotline shipper / "0000000000". Ghép cặp với tất cả sẽ sinh hàng loạt candidate nhiễu và
+     * làm ngập màn đối soát, nên bỏ qua khóa đó và ghi log để đội dữ liệu biết mà xử lý.
+     */
+    private Mono<List<Long>> poolByKey(Flux<MasterProfile> found, Long selfId, String keyLabel) {
+        return found.collectList().map(list -> {
+            if (list.size() > MAX_PROFILES_PER_KEY) {
+                log.warn("ProfileMatchCandidateServiceImpl - {} hồ sơ cùng {} (> {}) → khóa không có tính "
+                                + "phân biệt, bỏ qua để tránh sinh candidate hàng loạt. profileId={}",
+                        list.size(), keyLabel, MAX_PROFILES_PER_KEY, selfId);
+                return List.<Long>of();
+            }
+            return list.stream()
+                    .map(MasterProfile::getId)
+                    .filter(id -> !id.equals(selfId))
+                    .toList();
+        });
+    }
+
+    /**
+     * Khóa duy nhất do nguồn cấp (KHL_CODE/CRM_ID/POST_ID/APP_USER_ID/PAYMENT_ID) — mirror FP2c của
+     * {@code ProfileMergeDecisionService}. Thiếu bước này thì 2 hồ sơ trùng PostID nhưng khác
+     * CCCD/MST/SĐT/email sẽ không bao giờ được ghép cặp để so ở luồng admin.
+     */
+    private Mono<List<Long>> poolByTypedLinks(Long selfId) {
+        return identityLinkRepository.findByMasterProfileIdAndStatus(selfId, (short) 1)
+                .filter(ownLink -> UNIQUE_TYPED_IDENTITY_TYPES.contains(ownLink.getIdentityType()))
+                .concatMap(ownLink -> identityLinkRepository
+                        .findByIdentityTypeAndIdentityValue(ownLink.getIdentityType(), ownLink.getIdentityValue())
+                        .filter(l -> l.getStatus() != null && l.getStatus() == 1)
+                        .map(ProfileIdentityLink::getMasterProfileId)
+                        .filter(id -> !id.equals(selfId)))
+                .distinct()
+                .collectList();
     }
 
     private Mono<Void> processOneCandidate(MasterProfile profile, Long candidateProfileId) {
@@ -671,41 +753,46 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
                     if (isMergedOrDeleted(candidateProfile.getStatus())) {
                         return Mono.<Void>empty();
                     }
-
-                    ProfileMatchScoreResult scoreResult = scoreService.calculate(profile, candidateProfile);
-                    if (scoreResult.getScore().compareTo(BigDecimal.valueOf(70)) < 0) {
-                        log.debug("ProfileMatchCandidateServiceImpl - score {} too low for pair ({},{})",
-                                scoreResult.getScore(), profile.getId(), candidateProfileId);
-                        return Mono.<Void>empty();
-                    }
-
-                    Mono<Boolean> hasPendingMono = Mono.zip(
-                            candidateRepository.existsByLeftMasterProfileIdAndRightMasterProfileIdAndStatus(
-                                    profile.getId(), candidateProfileId, STATUS_PENDING),
-                            candidateRepository.existsByRightMasterProfileIdAndLeftMasterProfileIdAndStatus(
-                                    profile.getId(), candidateProfileId, STATUS_PENDING)
-                    ).map(t -> Boolean.TRUE.equals(t.getT1()) || Boolean.TRUE.equals(t.getT2()));
-                    Mono<Boolean> hasMergedMono = Mono.zip(
-                            candidateRepository.existsByLeftMasterProfileIdAndRightMasterProfileIdAndStatus(
-                                    profile.getId(), candidateProfileId, STATUS_MERGED),
-                            candidateRepository.existsByRightMasterProfileIdAndLeftMasterProfileIdAndStatus(
-                                    profile.getId(), candidateProfileId, STATUS_MERGED)
-                    ).map(t -> Boolean.TRUE.equals(t.getT1()) || Boolean.TRUE.equals(t.getT2()));
-
-                    return Mono.zip(hasPendingMono, hasMergedMono)
-                            .flatMap(t -> {
-                                if (t.getT1() || t.getT2()) {
-                                    log.debug("ProfileMatchCandidateServiceImpl - already has pending/merged " +
-                                            "candidate for pair ({},{})", profile.getId(), candidateProfileId);
-                                    return Mono.<Void>empty();
-                                }
-                                return continueOrCreate(profile, candidateProfile, scoreResult);
-                            });
+                    return resolveMatch(profile, candidateProfile)
+                            .flatMap(scoreResult -> processScoredPair(profile, candidateProfile, scoreResult));
                 })
                 .onErrorResume(ex -> {
                     log.error("ProfileMatchCandidateServiceImpl - error for pair ({},{}): {}",
                             profile.getId(), candidateProfileId, ex.getMessage(), ex);
                     return Mono.empty();
+                });
+    }
+
+    private Mono<Void> processScoredPair(MasterProfile profile, MasterProfile candidateProfile,
+                                         ProfileMatchScoreResult scoreResult) {
+        Long candidateProfileId = candidateProfile.getId();
+        if (scoreResult.getScore().compareTo(MIN_CANDIDATE_SCORE) < 0) {
+            log.debug("ProfileMatchCandidateServiceImpl - score {} too low for pair ({},{})",
+                    scoreResult.getScore(), profile.getId(), candidateProfileId);
+            return Mono.empty();
+        }
+
+        Mono<Boolean> hasPendingMono = Mono.zip(
+                candidateRepository.existsByLeftMasterProfileIdAndRightMasterProfileIdAndStatus(
+                        profile.getId(), candidateProfileId, STATUS_PENDING),
+                candidateRepository.existsByRightMasterProfileIdAndLeftMasterProfileIdAndStatus(
+                        profile.getId(), candidateProfileId, STATUS_PENDING)
+        ).map(t -> Boolean.TRUE.equals(t.getT1()) || Boolean.TRUE.equals(t.getT2()));
+        Mono<Boolean> hasMergedMono = Mono.zip(
+                candidateRepository.existsByLeftMasterProfileIdAndRightMasterProfileIdAndStatus(
+                        profile.getId(), candidateProfileId, STATUS_MERGED),
+                candidateRepository.existsByRightMasterProfileIdAndLeftMasterProfileIdAndStatus(
+                        profile.getId(), candidateProfileId, STATUS_MERGED)
+        ).map(t -> Boolean.TRUE.equals(t.getT1()) || Boolean.TRUE.equals(t.getT2()));
+
+        return Mono.zip(hasPendingMono, hasMergedMono)
+                .flatMap(t -> {
+                    if (t.getT1() || t.getT2()) {
+                        log.debug("ProfileMatchCandidateServiceImpl - already has pending/merged " +
+                                "candidate for pair ({},{})", profile.getId(), candidateProfileId);
+                        return Mono.<Void>empty();
+                    }
+                    return continueOrCreate(profile, candidateProfile, scoreResult);
                 });
     }
 
@@ -720,7 +807,7 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
                 .flatMap(existing -> {
                     if (existing.getStatus() == STATUS_IGNORED || existing.getStatus() == STATUS_REJECTED) {
                         BigDecimal diff = scoreResult.getScore().subtract(existing.getMatchScore());
-                        if (diff.compareTo(BigDecimal.TEN) < 0) {
+                        if (diff.compareTo(MIN_SCORE_IMPROVEMENT) < 0) {
                             return Mono.just(false);
                         }
                         existing.setStatus(STATUS_EXPIRED);
@@ -739,6 +826,155 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
                                     profile.getId(), candidateProfile.getId()));
                 })
                 .then();
+    }
+
+    // =====================================================================
+    // DETERMINISTIC-FIRST — khóa mạnh quyết định trước, điểm cộng dồn chỉ là fallback
+    // =====================================================================
+
+    /**
+     * Điểm cuối cùng của một cặp hồ sơ: chạy scorer trước để có đủ reasons, rồi nếu so được một
+     * khóa mạnh thì ghi đè điểm bằng mốc deterministic tương ứng.
+     *
+     * <p>Lý do tồn tại: scorer là additive nên hai hồ sơ trùng CCCD (hoặc trùng MST) hoàn toàn chỉ
+     * được {@code SCORE_IDENTITY_NO}/100 — không đạt ngưỡng auto-merge và bị xếp ngang một cặp chỉ
+     * trùng vài tín hiệu yếu. Thứ tự xét mirror {@code ProfileMergeDecisionService} của ingestion:
+     * CCCD → MST → khóa typed → probabilistic.
+     *
+     * <p>Danh sách reason của scorer được GIỮ NGUYÊN (không rút còn một dòng): màn đối chiếu cần
+     * thấy đủ bằng chứng, và {@code matchedKeys} lấy trực tiếp từ bảng reason nên rút bớt sẽ làm mất
+     * khoá khớp trên UI.
+     *
+     * <p>Nhánh XUNG ĐỘT khóa mạnh cố tình KHÔNG tự đặt điểm: trả nguyên kết quả probabilistic, vì
+     * scorer đã set {@code identityConflict=true} khiến {@code autoMergeRecommended} luôn false.
+     * Nếu trả điểm thấp cố định thì {@code createCandidate()} sẽ throw SCORE_TOO_LOW và luồng detect
+     * sẽ skip, làm MẤT candidate cần review.
+     */
+    private Mono<ProfileMatchScoreResult> resolveMatch(MasterProfile left, MasterProfile right) {
+        ProfileMatchScoreResult scoreResult = scoreService.calculate(left, right);
+
+        // 1. CCCD — khóa mạnh nhất, ưu tiên tuyệt đối trên MST: khớp hay lệch CCCD đều là quyết
+        // định cuối, không xét MST nữa (giống ingestion).
+        String leftIdentityNo  = IdentityUtils.normalizeIdentityNo(left.getIdentityNo());
+        String rightIdentityNo = IdentityUtils.normalizeIdentityNo(right.getIdentityNo());
+        if (StringUtils.hasText(leftIdentityNo) && StringUtils.hasText(rightIdentityNo)) {
+            if (!leftIdentityNo.equals(rightIdentityNo)) {
+                log.info("ProfileMatchCandidateServiceImpl - resolveMatch pair ({},{}): identityNo conflict "
+                                + "→ giữ điểm probabilistic score={}, autoMerge={}",
+                        left.getId(), right.getId(), scoreResult.getScore(),
+                        scoreResult.isAutoMergeRecommended());
+                return Mono.just(scoreResult);
+            }
+            return Mono.just(promoteDeterministic(scoreResult, DETERMINISTIC_SCORE_IDENTITY,
+                    "identityNo match", left, right));
+        }
+
+        // 2. MST — định danh mạnh của khách doanh nghiệp. Chỉ xét khi không so được CCCD.
+        String leftTaxCode  = IdentityUtils.normalizeIdentityNo(left.getTaxCode());
+        String rightTaxCode = IdentityUtils.normalizeIdentityNo(right.getTaxCode());
+        if (StringUtils.hasText(leftTaxCode) && StringUtils.hasText(rightTaxCode)) {
+            if (!leftTaxCode.equals(rightTaxCode)) {
+                log.info("ProfileMatchCandidateServiceImpl - resolveMatch pair ({},{}): taxCode conflict "
+                                + "→ giữ điểm probabilistic score={}, autoMerge={}",
+                        left.getId(), right.getId(), scoreResult.getScore(),
+                        scoreResult.isAutoMergeRecommended());
+                return Mono.just(scoreResult);
+            }
+            if (nameCompatible(left.getFullName(), right.getFullName())) {
+                return Mono.just(promoteDeterministic(scoreResult, DETERMINISTIC_SCORE_TAX,
+                        "taxCode match (name ok)", left, right));
+            }
+            // Khớp MST nhưng tên lệch xa: rất có thể là hai nhân viên khai chung MST/SĐT/email
+            // công ty. Điểm cộng dồn (MST 50 + SĐT 40 + email 35) tự vượt ngưỡng auto-merge nên phải
+            // chặn tay, mirror NEED_REVIEW của ingestion.
+            scoreResult.setAutoMergeRecommended(false);
+            log.info("ProfileMatchCandidateServiceImpl - resolveMatch pair ({},{}): taxCode match nhưng tên "
+                            + "lệch quá xa → chặn auto-merge, score={}",
+                    left.getId(), right.getId(), scoreResult.getScore());
+            return Mono.just(scoreResult);
+        }
+
+        // 3. Khóa duy nhất do nguồn cấp (KHL_CODE/CRM_ID/POST_ID/APP_USER_ID/PAYMENT_ID) — chỉ xét
+        // khi không so được CCCD lẫn MST. Mirror FP2c của ProfileMergeDecisionService (ingestion).
+        return matchedByUniqueTypedId(left, right)
+                .map(matched -> Boolean.TRUE.equals(matched)
+                        ? promoteDeterministic(scoreResult, DETERMINISTIC_SCORE_TYPED_ID,
+                                "typed identifier match", left, right)
+                        // 4. Không có khóa mạnh nào so được cả hai bên → probabilistic thuần như trước.
+                        : scoreResult);
+    }
+
+    /**
+     * Kiểm tra 2 hồ sơ có cùng chia sẻ ít nhất một giá trị ACTIVE của cùng một loại khóa duy nhất
+     * do nguồn cấp ({@link #UNIQUE_TYPED_IDENTITY_TYPES}) hay không.
+     *
+     * <p>Nạp link của mỗi hồ sơ đúng MỘT lần rồi group theo type: hàm này nằm trong vòng lặp của
+     * {@code detectAndCreateCandidatesForProfile}, nếu query lại cho từng type thì thành 5 query mỗi
+     * hồ sơ (10 mỗi cặp) trong khi tất cả đều là cùng một câu truy vấn.
+     */
+    private Mono<Boolean> matchedByUniqueTypedId(MasterProfile left, MasterProfile right) {
+        return activeTypedIdentityValues(left.getId())
+                .flatMap(leftByType -> leftByType.isEmpty()
+                        ? Mono.just(false)
+                        : activeTypedIdentityValues(right.getId())
+                                .map(rightByType -> leftByType.entrySet().stream().anyMatch(entry -> {
+                                    Set<String> rightValues = rightByType.get(entry.getKey());
+                                    return rightValues != null
+                                            && entry.getValue().stream().anyMatch(rightValues::contains);
+                                })));
+    }
+
+    /** Giá trị các khóa typed đang ACTIVE của một hồ sơ, nhóm theo identityType. */
+    private Mono<Map<String, Set<String>>> activeTypedIdentityValues(Long masterProfileId) {
+        return identityLinkRepository.findByMasterProfileIdAndStatus(masterProfileId, (short) 1)
+                .filter(link -> UNIQUE_TYPED_IDENTITY_TYPES.contains(link.getIdentityType())
+                        && StringUtils.hasText(link.getIdentityValue()))
+                .<Map<String, Set<String>>>collect(HashMap::new, (byType, link) ->
+                        byType.computeIfAbsent(link.getIdentityType(), k -> new HashSet<>())
+                                .add(link.getIdentityValue()));
+    }
+
+    /**
+     * Nâng kết quả probabilistic thành kết quả deterministic: ghi đè score / matchLevel /
+     * autoMergeRecommended, giữ nguyên reasons và cờ identityConflict.
+     */
+    private ProfileMatchScoreResult promoteDeterministic(ProfileMatchScoreResult scoreResult,
+                                                        BigDecimal deterministicScore,
+                                                        String rule,
+                                                        MasterProfile left, MasterProfile right) {
+        scoreResult.setScore(deterministicScore.setScale(2, RoundingMode.HALF_UP));
+        scoreResult.setMatchLevel(resolveMatchLevel(scoreResult.getScore()));
+        // Khóa mạnh CÒN LẠI vẫn có thể lệch (trùng CCCD nhưng khác MST). Giữ nguyên cờ
+        // identityConflict của scorer và không đề xuất auto-merge trong trường hợp đó — thận trọng
+        // hơn ingestion một bậc, vì merge chưa có cơ chế hoàn tác.
+        scoreResult.setAutoMergeRecommended(!scoreResult.isIdentityConflict());
+        log.info("ProfileMatchCandidateServiceImpl - resolveMatch pair ({},{}): deterministic {} "
+                        + "→ score={}, level={}, autoMerge={}, conflict={}",
+                left.getId(), right.getId(), rule, scoreResult.getScore(), scoreResult.getMatchLevel(),
+                scoreResult.isAutoMergeRecommended(), scoreResult.isIdentityConflict());
+        return scoreResult;
+    }
+
+    /**
+     * Tên hai bên "không lệch quá xa" theo đúng ngưỡng {@link #NAME_SIMILARITY_MIN} đang dùng ở
+     * scorer và ingestion. Thiếu tên ở một bên thì coi như đạt — không có cơ sở để phủ định khóa mạnh.
+     */
+    private boolean nameCompatible(String leftName, String rightName) {
+        String l = IdentityUtils.normalizeName(leftName);
+        String r = IdentityUtils.normalizeName(rightName);
+        if (!StringUtils.hasText(l) || !StringUtils.hasText(r)) {
+            return true;
+        }
+        return IdentityUtils.calculateNameSimilarity(l, r) >= NAME_SIMILARITY_MIN;
+    }
+
+    /** Cùng thang với {@code ProfileMatchScoreService.resolveMatchLevel} để badge trên 2 màn khớp nhau. */
+    private String resolveMatchLevel(BigDecimal score) {
+        if (score == null) return "LOW";
+        if (score.compareTo(BigDecimal.valueOf(IdentityMatchThresholds.LEVEL_VERY_HIGH)) >= 0) return "VERY_HIGH";
+        if (score.compareTo(BigDecimal.valueOf(IdentityMatchThresholds.LEVEL_HIGH)) >= 0) return "HIGH";
+        if (score.compareTo(BigDecimal.valueOf(IdentityMatchThresholds.LEVEL_MEDIUM)) >= 0) return "MEDIUM";
+        return "LOW";
     }
 
     private Mono<ProfileMatchCandidate> persistCandidateWithReasons(MasterProfile left, MasterProfile right,

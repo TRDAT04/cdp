@@ -19,42 +19,46 @@ import vn.vnpost.example.ingestion.dto.NormalizedProfileData;
 @Service
 public class ProfileMatchScoreService {
 
-    private static final int SCORE_IDENTITY_NO = 50;
-    private static final int SCORE_PHONE = 40;
-    private static final int SCORE_EMAIL = 35;
-    private static final int SCORE_NAME_EXACT = 30;
-    private static final int SCORE_NAME_SIM_90 = 20;
-    private static final int SCORE_NAME_SIM_85 = 15;
-    private static final int SCORE_NAME_SIM_75 = 5;
-    private static final int SCORE_DOB = 20;
-    private static final int SCORE_PROVINCE = 10;
-    private static final int SCORE_UNIT = 5;
-    private static final int MAX_SCORE = 100;
+    // Con số định nghĩa ở IdentityMatchThresholds — nơi duy nhất, vì API bảng rule cũng đọc từ đó.
+    private static final int SCORE_IDENTITY_NO = IdentityMatchThresholds.SCORE_IDENTITY_NO;
+    private static final int SCORE_TAX_CODE = IdentityMatchThresholds.SCORE_TAX_CODE;
+    private static final int SCORE_PHONE = IdentityMatchThresholds.SCORE_PHONE;
+    private static final int SCORE_EMAIL = IdentityMatchThresholds.SCORE_EMAIL;
+    private static final int SCORE_NAME_EXACT = IdentityMatchThresholds.SCORE_NAME_EXACT;
+    private static final int SCORE_NAME_SIM_90 = IdentityMatchThresholds.SCORE_NAME_SIM_90;
+    private static final int SCORE_NAME_SIM_85 = IdentityMatchThresholds.SCORE_NAME_SIM_85;
+    private static final int SCORE_NAME_SIM_75 = IdentityMatchThresholds.SCORE_NAME_SIM_75;
+    private static final int SCORE_DOB = IdentityMatchThresholds.SCORE_DOB;
+    private static final int SCORE_PROVINCE = IdentityMatchThresholds.SCORE_PROVINCE;
+    private static final int SCORE_UNIT = IdentityMatchThresholds.SCORE_UNIT;
+    private static final int MAX_SCORE = IdentityMatchThresholds.MAX_SCORE;
 
     public ProfileMatchScoreResult calculate(MasterProfile left, MasterProfile right) {
         return calculateCore(
-                left.getIdentityNo(), left.getPhone(), left.getEmail(), left.getFullName(), left.getDateOfBirth() != null ? left.getDateOfBirth().toString() : null, left.getProvinceCode(), left.getUnitCode(), left.getId().toString(),
-                right.getIdentityNo(), right.getPhone(), right.getEmail(), right.getFullName(), right.getDateOfBirth() != null ? right.getDateOfBirth().toString() : null, right.getProvinceCode(), right.getUnitCode(), right.getId().toString()
+                left.getIdentityNo(), left.getTaxCode(), left.getPhone(), left.getEmail(), left.getFullName(), left.getDateOfBirth() != null ? left.getDateOfBirth().toString() : null, left.getProvinceCode(), left.getUnitCode(), left.getId().toString(),
+                right.getIdentityNo(), right.getTaxCode(), right.getPhone(), right.getEmail(), right.getFullName(), right.getDateOfBirth() != null ? right.getDateOfBirth().toString() : null, right.getProvinceCode(), right.getUnitCode(), right.getId().toString()
         );
     }
 
     public ProfileMatchScoreResult calculate(NormalizedProfileData left, MasterProfile right) {
         return calculateCore(
-                left.getIdentityNo(), left.getPhone(), left.getEmail(), left.getFullName(), left.getDateOfBirth() != null ? left.getDateOfBirth().toString() : null, left.getProvinceCode(), left.getUnitCode(), "incoming",
-                right.getIdentityNo(), right.getPhone(), right.getEmail(), right.getFullName(), right.getDateOfBirth() != null ? right.getDateOfBirth().toString() : null, right.getProvinceCode(), right.getUnitCode(), right.getId().toString()
+                left.getIdentityNo(), left.getTaxCode(), left.getPhone(), left.getEmail(), left.getFullName(), left.getDateOfBirth() != null ? left.getDateOfBirth().toString() : null, left.getProvinceCode(), left.getUnitCode(), "incoming",
+                right.getIdentityNo(), right.getTaxCode(), right.getPhone(), right.getEmail(), right.getFullName(), right.getDateOfBirth() != null ? right.getDateOfBirth().toString() : null, right.getProvinceCode(), right.getUnitCode(), right.getId().toString()
         );
     }
 
     private ProfileMatchScoreResult calculateCore(
-            String leftIdNo, String leftPh, String leftEm, String leftFn, String leftDob, String leftProv, String leftUnit, String leftLogId,
-            String rightIdNo, String rightPh, String rightEm, String rightFn, String rightDob, String rightProv, String rightUnit, String rightLogId) {
+            String leftIdNo, String leftTax, String leftPh, String leftEm, String leftFn, String leftDob, String leftProv, String leftUnit, String leftLogId,
+            String rightIdNo, String rightTax, String rightPh, String rightEm, String rightFn, String rightDob, String rightProv, String rightUnit, String rightLogId) {
 
         List<ProfileMatchReasonCreateItem> reasons = new ArrayList<>();
         int rawScore = 0;
         boolean identityConflict = false;
 
-        String leftIdentityNo  = IdentityUtils.normalizeText(leftIdNo);
-        String rightIdentityNo = IdentityUtils.normalizeText(rightIdNo);
+        String leftIdentityNo  = IdentityUtils.normalizeIdentityNo(leftIdNo);
+        String rightIdentityNo = IdentityUtils.normalizeIdentityNo(rightIdNo);
+        String leftTaxCode     = IdentityUtils.normalizeIdentityNo(leftTax);
+        String rightTaxCode    = IdentityUtils.normalizeIdentityNo(rightTax);
         String leftPhone       = IdentityUtils.normalizePhone(leftPh);
         String rightPhone      = IdentityUtils.normalizePhone(rightPh);
         String leftEmail       = IdentityUtils.normalizeEmail(leftEm);
@@ -72,6 +76,21 @@ public class ProfileMatchScoreService {
                 identityConflict = true;
                 reasons.add(reason("IDENTITY_CONFLICT", "Identity numbers differ",
                         leftIdNo, rightIdNo, 0));
+            }
+        }
+
+        // 1b. Tax code — với khách doanh nghiệp, MST là định danh mạnh ngang CCCD của cá nhân.
+        // Hai MST khác nhau nghĩa là hai pháp nhân khác nhau, nên coi như identity conflict:
+        // chặn auto-merge và đẩy sang NEED_REVIEW đúng như trường hợp CCCD lệch.
+        if (StringUtils.hasText(leftTaxCode) && StringUtils.hasText(rightTaxCode)) {
+            if (leftTaxCode.equals(rightTaxCode)) {
+                rawScore += SCORE_TAX_CODE;
+                reasons.add(reason("TAX_CODE_MATCH", "Tax code matched",
+                        leftTax, rightTax, SCORE_TAX_CODE));
+            } else {
+                identityConflict = true;
+                reasons.add(reason("TAX_CODE_CONFLICT", "Tax codes differ",
+                        leftTax, rightTax, 0));
             }
         }
 
@@ -107,15 +126,15 @@ public class ProfileMatchScoreService {
                         leftFn, rightFn, SCORE_NAME_EXACT));
             } else {
                 double similarity = IdentityUtils.calculateNameSimilarity(leftName, rightName);
-                if (similarity >= 90) {
+                if (similarity >= IdentityMatchThresholds.NAME_SIMILARITY_TIER_90) {
                     rawScore += SCORE_NAME_SIM_90;
                     reasons.add(reason("NAME_SIMILAR", "Name similarity >= 90%",
                             leftFn, rightFn, SCORE_NAME_SIM_90));
-                } else if (similarity >= 85) {
+                } else if (similarity >= IdentityMatchThresholds.NAME_SIMILARITY_TIER_85) {
                     rawScore += SCORE_NAME_SIM_85;
                     reasons.add(reason("NAME_SIMILAR", "Name similarity >= 85%",
                             leftFn, rightFn, SCORE_NAME_SIM_85));
-                } else if (similarity >= 75) {
+                } else if (similarity >= IdentityMatchThresholds.NAME_SIMILARITY_TIER_75) {
                     rawScore += SCORE_NAME_SIM_75;
                     reasons.add(reason("NAME_SIMILAR", "Name similarity >= 75%",
                             leftFn, rightFn, SCORE_NAME_SIM_75));
@@ -152,7 +171,8 @@ public class ProfileMatchScoreService {
         }
 
         int finalScore = Math.min(rawScore, MAX_SCORE);
-        boolean autoMergeRecommended = finalScore >= 95 && !identityConflict;
+        boolean autoMergeRecommended =
+                finalScore >= IdentityMatchThresholds.AUTO_MERGE_SCORE && !identityConflict;
         String matchLevel = resolveMatchLevel(finalScore);
 
         log.debug("ProfileMatchScoreService - left={}, right={}, score={}, level={}, conflict={}",
@@ -176,8 +196,8 @@ public class ProfileMatchScoreService {
     }
 
     private boolean checkIdentityConflictCore(String leftIdNo, String rightIdNo) {
-        String leftId  = IdentityUtils.normalizeText(leftIdNo);
-        String rightId = IdentityUtils.normalizeText(rightIdNo);
+        String leftId  = IdentityUtils.normalizeIdentityNo(leftIdNo);
+        String rightId = IdentityUtils.normalizeIdentityNo(rightIdNo);
 
         if (StringUtils.hasText(leftId) && StringUtils.hasText(rightId) && !leftId.equals(rightId)) {
             return true;
@@ -186,9 +206,9 @@ public class ProfileMatchScoreService {
     }
 
     private String resolveMatchLevel(int score) {
-        if (score >= 95) return "VERY_HIGH";
-        if (score >= 85) return "HIGH";
-        if (score >= 70) return "MEDIUM";
+        if (score >= IdentityMatchThresholds.LEVEL_VERY_HIGH) return "VERY_HIGH";
+        if (score >= IdentityMatchThresholds.LEVEL_HIGH) return "HIGH";
+        if (score >= IdentityMatchThresholds.LEVEL_MEDIUM) return "MEDIUM";
         return "LOW";
     }
 

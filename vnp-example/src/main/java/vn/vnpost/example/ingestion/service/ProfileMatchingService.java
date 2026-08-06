@@ -7,15 +7,23 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import vn.vnpost.example.ingestion.dto.NormalizedProfileData;
 import vn.vnpost.example.profile.entity.MasterProfile;
+import vn.vnpost.example.profile.entity.ProfileIdentityLink;
 import vn.vnpost.example.profile.enums.IdentityType;
 import vn.vnpost.example.profile.repository.MasterProfileRepository;
 import vn.vnpost.example.profile.repository.ProfileIdentityLinkRepository;
+import vn.vnpost.example.profile.service.match.IdentityMatchThresholds;
 
 import java.util.*;
 
 @Slf4j
 @Service
 public class ProfileMatchingService {
+
+    private static final short PROFILE_MERGED  = 3;
+    private static final short PROFILE_DELETED = 5;
+
+    /** Một giá trị khóa khớp nhiều hơn ngưỡng này thì coi như khóa rác, không dùng để tìm candidate. */
+    private static final int MAX_PROFILES_PER_KEY = IdentityMatchThresholds.MAX_PROFILES_PER_KEY;
 
     private final MasterProfileRepository masterProfileRepository;
     private final ProfileIdentityLinkRepository identityLinkRepository;
@@ -31,36 +39,32 @@ public class ProfileMatchingService {
 
         // 1. Match by identityNo
         if (StringUtils.hasText(data.getIdentityNo())) {
-            steps.add(masterProfileRepository.findByIdentityNo(data.getIdentityNo()).flux());
+            steps.add(byProfileKey(masterProfileRepository.findByIdentityNo(data.getIdentityNo()), "CCCD"));
         }
 
         // 2. Match by phone — master_profiles and identity_links
         if (StringUtils.hasText(data.getPhone())) {
-            steps.add(masterProfileRepository.findByPhone(data.getPhone()).flux());
-            steps.add(identityLinkRepository.findByIdentityTypeAndIdentityValue("PHONE", data.getPhone())
-                    .filter(l -> l.getStatus() != null && l.getStatus() == 1)
-                    .concatMap(l -> masterProfileRepository.findById(l.getMasterProfileId())));
+            steps.add(byProfileKey(masterProfileRepository.findByPhone(data.getPhone()), "SĐT"));
+            steps.add(byLinks(identityLinkRepository
+                    .findByIdentityTypeAndIdentityValue("PHONE", data.getPhone()), "PHONE"));
         }
 
         // 3. Match by email — master_profiles and identity_links
         if (StringUtils.hasText(data.getEmail())) {
-            steps.add(masterProfileRepository.findByEmail(data.getEmail()).flux());
-            steps.add(identityLinkRepository.findByIdentityTypeAndIdentityValue("EMAIL", data.getEmail())
-                    .filter(l -> l.getStatus() != null && l.getStatus() == 1)
-                    .concatMap(l -> masterProfileRepository.findById(l.getMasterProfileId())));
+            steps.add(byProfileKey(masterProfileRepository.findByEmail(data.getEmail()), "email"));
+            steps.add(byLinks(identityLinkRepository
+                    .findByIdentityTypeAndIdentityValue("EMAIL", data.getEmail()), "EMAIL"));
         }
 
         // 4. Match by sourceSystem + sourceCustomerId in identity_links
         if (StringUtils.hasText(data.getSourceSystem()) && StringUtils.hasText(data.getSourceCustomerId())) {
-            steps.add(identityLinkRepository
-                    .findBySourceSystemAndSourceCustomerId(data.getSourceSystem(), data.getSourceCustomerId())
-                    .flux()
-                    .concatMap(l -> masterProfileRepository.findById(l.getMasterProfileId())));
+            steps.add(byLinks(identityLinkRepository.findBySourceSystemAndSourceCustomerId(
+                    data.getSourceSystem(), data.getSourceCustomerId()), "sourceCustomerId"));
         }
 
         // 5. Match by taxCode (MST) — khóa doanh nghiệp duy nhất
         if (StringUtils.hasText(data.getTaxCode())) {
-            steps.add(masterProfileRepository.findByTaxCode(data.getTaxCode()).flux());
+            steps.add(byProfileKey(masterProfileRepository.findByTaxCode(data.getTaxCode()), "MST"));
         }
 
         // 6. Match theo các identity_type mạnh, xuyên nguồn (KHÔNG gồm DEVICE_ID/COOKIE_ID —
@@ -73,10 +77,9 @@ public class ProfileMatchingService {
         typedIdentifiers.put(IdentityType.PAYMENT_ID, data.getPaymentId());
         for (Map.Entry<IdentityType, String> entry : typedIdentifiers.entrySet()) {
             if (!StringUtils.hasText(entry.getValue())) continue;
-            steps.add(identityLinkRepository
-                    .findByIdentityTypeAndIdentityValue(entry.getKey().name(), entry.getValue())
-                    .filter(l -> l.getStatus() != null && l.getStatus() == 1)
-                    .concatMap(l -> masterProfileRepository.findById(l.getMasterProfileId())));
+            steps.add(byLinks(identityLinkRepository
+                    .findByIdentityTypeAndIdentityValue(entry.getKey().name(), entry.getValue()),
+                    entry.getKey().name()));
         }
 
         return Flux.concat(steps)
@@ -87,5 +90,53 @@ public class ProfileMatchingService {
                             candidates.size(), data.getSourceSystem(), data.getSourceCustomerId());
                     return candidates;
                 });
+    }
+
+    /**
+     * Các hồ sơ còn dùng được tìm theo một khóa của {@code master_profiles}.
+     *
+     * <p>Một giá trị khóa khớp quá nhiều hồ sơ thì không còn tính phân biệt (SĐT rác / hotline
+     * shipper / "0000000000"). Nhận hết sẽ đẩy mọi record vào nhánh CONFLICT với hàng nghìn candidate,
+     * nên bỏ qua khóa đó và ghi log để đội dữ liệu xử lý.
+     */
+    private Flux<MasterProfile> byProfileKey(Flux<MasterProfile> found, String keyLabel) {
+        return found.collectList().flatMapMany(list -> {
+            if (list.size() > MAX_PROFILES_PER_KEY) {
+                log.warn("ProfileMatchingService - {} hồ sơ cùng {} (> {}) → khóa không có tính phân biệt, bỏ qua",
+                        list.size(), keyLabel, MAX_PROFILES_PER_KEY);
+                return Flux.empty();
+            }
+            return Flux.fromIterable(list).filter(this::isUsable);
+        });
+    }
+
+    /** Như {@link #byProfileKey} nhưng đi từ identity_links: chỉ nhận link đang ACTIVE (status=1). */
+    private Flux<MasterProfile> byLinks(Flux<ProfileIdentityLink> links, String keyLabel) {
+        return links
+                .filter(l -> l.getStatus() != null && l.getStatus() == 1)
+                .map(ProfileIdentityLink::getMasterProfileId)
+                .distinct()
+                .collectList()
+                .flatMapMany(profileIds -> {
+                    if (profileIds.size() > MAX_PROFILES_PER_KEY) {
+                        log.warn("ProfileMatchingService - {} hồ sơ cùng link {} (> {}) → khóa không có tính "
+                                        + "phân biệt, bỏ qua",
+                                profileIds.size(), keyLabel, MAX_PROFILES_PER_KEY);
+                        return Flux.empty();
+                    }
+                    return Flux.fromIterable(profileIds)
+                            .concatMap(masterProfileRepository::findById)
+                            .filter(this::isUsable);
+                });
+    }
+
+    /**
+     * Hồ sơ đã MERGED/DELETED là "bia mộ" — nó đã trỏ mergedIntoProfileId sang hồ sơ khác. Nếu để
+     * lọt vào pool thì AUTO_MERGE sẽ ghi dữ liệu vào hồ sơ chết và dữ liệu đó không còn hiển thị ở
+     * bất kỳ đâu. Nhất quán với loadActiveProfile() của luồng admin (chỉ chặn 3 và 5).
+     */
+    private boolean isUsable(MasterProfile p) {
+        Short status = p.getStatus();
+        return status == null || (status != PROFILE_MERGED && status != PROFILE_DELETED);
     }
 }

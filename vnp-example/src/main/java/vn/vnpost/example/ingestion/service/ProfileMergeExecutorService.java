@@ -122,10 +122,14 @@ public class ProfileMergeExecutorService {
         log.info("ProfileMergeExecutorService - autoMerge: sourceSystem={}, targetProfileId={}",
                 data.getSourceSystem(), targetProfile.getId());
 
-        // 1. Ensure identity link exists
+        // 1. Ensure identity link exists — hỏi đúng câu "hồ sơ ĐÍCH đã có link ACTIVE cho source này
+        // chưa", thay vì "có ai đó đã link chưa". Link status=3 (MERGED) sót lại từ lần merge trước
+        // không được tính là đã link; và khi decide() chọn được đích trong nhiều candidate, link cũ
+        // có thể đang trỏ sang candidate KHÁC nên vẫn phải tạo link mới cho đích.
         Mono<Void> ensureIdentityLink = identityLinkRepository
-                .findBySourceSystemAndSourceCustomerId(data.getSourceSystem(), data.getSourceCustomerId())
-                .hasElement()
+                .findBySourceSystemAndSourceCustomerIdAndStatus(
+                        data.getSourceSystem(), data.getSourceCustomerId(), (short) 1)
+                .any(l -> l.getMasterProfileId().equals(targetProfile.getId()))
                 .flatMap(linkedAlready -> Boolean.TRUE.equals(linkedAlready)
                         ? Mono.<Void>empty()
                         : createIdentityLink(targetProfile.getId(), data, false));
