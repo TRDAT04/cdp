@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import vn.vnpost.cdp.ingestion.dto.MergeDecisionResult;
 import vn.vnpost.cdp.ingestion.dto.NormalizedProfileData;
 import vn.vnpost.cdp.ingestion.dto.ProfileIngestionMessage;
 import vn.vnpost.cdp.ingestion.enums.MergeDecision;
@@ -78,9 +79,12 @@ public class ProfileIngestionServiceImpl implements ProfileIngestionService {
                     candidates.size(), message.getMessageId());
 
             // 5. Decide merge strategy
-            MergeDecision decision = mergeDecisionService.decide(normalizedData, candidates);
-            log.info("ProfileIngestionServiceImpl - merge decision={} for messageId={}",
-                    decision, message.getMessageId());
+            MergeDecisionResult decisionResult = mergeDecisionService.decide(normalizedData, candidates);
+            MergeDecision decision = decisionResult.decision();
+            log.info("ProfileIngestionServiceImpl - merge decision={} targetProfileId={} for messageId={}",
+                    decision,
+                    decisionResult.target() != null ? decisionResult.target().getId() : null,
+                    message.getMessageId());
 
             // 6. Execute merge
             switch (decision) {
@@ -89,7 +93,9 @@ public class ProfileIngestionServiceImpl implements ProfileIngestionService {
                     mergeExecutorService.createNewProfile(sourceRecord, normalizedData);
                 }
                 case AUTO_MERGE -> {
-                    MasterProfile target = candidates.get(0);
+                    // Phải dùng target do decide() chọn, KHÔNG phải candidates.get(0): khi có nhiều
+                    // candidate, decide() tách bằng khóa mạnh và hồ sơ được chọn có thể ở index khác.
+                    MasterProfile target = decisionResult.target();
                     log.info("ProfileIngestionServiceImpl - auto-merging with profileId={} for messageId={}",
                             target.getId(), message.getMessageId());
                     mergeExecutorService.autoMerge(sourceRecord, normalizedData, target);
@@ -102,13 +108,14 @@ public class ProfileIngestionServiceImpl implements ProfileIngestionService {
                 case NEED_REVIEW -> {
                     log.info("ProfileIngestionServiceImpl - field-level NEED_REVIEW for messageId={}",
                             message.getMessageId());
-                    mergeExecutorService.createFieldLevelNeedReview(sourceRecord, normalizedData, candidates.get(0));
+                    mergeExecutorService.createFieldLevelNeedReview(sourceRecord, normalizedData,
+                            decisionResult.target());
                 }
                 case CREATE_MATCH_CANDIDATE -> {
 
                     log.info("ProfileIngestionServiceImpl - CREATE_MATCH_CANDIDATE for messageId={}",
                             message.getMessageId());
-                    MasterProfile existingProfile = candidates.get(0);
+                    MasterProfile existingProfile = decisionResult.target();
                     MasterProfile newProfile = mergeExecutorService.createProfileForReview(
                             sourceRecord, normalizedData);
                     matchCandidateService.createCandidateBetweenProfiles(
@@ -181,12 +188,21 @@ public class ProfileIngestionServiceImpl implements ProfileIngestionService {
     }
 
     private String buildRejectReason(NormalizedProfileData data) {
+        // Giữ đúng bộ khóa mà ProfileMergeDecisionService.hasUsableIdentity() dùng để REJECT,
+        // nếu không thông báo lỗi sẽ chỉ ra sai nguyên nhân.
         boolean hasIdentity = StringUtils.hasText(data.getIdentityNo())
                 || StringUtils.hasText(data.getPhone())
                 || StringUtils.hasText(data.getEmail())
-                || StringUtils.hasText(data.getSourceCustomerId());
+                || StringUtils.hasText(data.getSourceCustomerId())
+                || StringUtils.hasText(data.getTaxCode())
+                || StringUtils.hasText(data.getPostId())
+                || StringUtils.hasText(data.getKhlCode())
+                || StringUtils.hasText(data.getCrmId())
+                || StringUtils.hasText(data.getAppUserId())
+                || StringUtils.hasText(data.getPaymentId());
         if (!hasIdentity) {
-            return "No usable identity fields (identityNo, phone, email, sourceCustomerId are all blank)";
+            return "No usable identity fields (identityNo, phone, email, sourceCustomerId, taxCode, "
+                    + "postId, khlCode, crmId, appUserId, paymentId are all blank)";
         }
         return "Unknown or invalid source system: " + data.getSourceSystem();
     }

@@ -5,6 +5,14 @@ import org.springframework.util.StringUtils;
 import java.text.Normalizer;
 import java.util.regex.Pattern;
 
+/**
+ * Bộ chuẩn hoá định danh DUY NHẤT của hệ thống.
+ *
+ * <p>Mọi nơi ghi giá trị định danh vào {@code master_profiles} và mọi nơi truy vấn/so sánh chúng
+ * đều phải đi qua đây. Nếu tồn tại hai bộ chuẩn hoá song song thì giá trị được LƯU sẽ khác giá trị
+ * dùng để TRUY VẤN, và hai hồ sơ của cùng một người sẽ không bao giờ được ghép cặp để so — dù nếu
+ * được ghép thì scorer lại kết luận là khớp.
+ */
 public class IdentityUtils {
 
     public static String normalizeText(String value) {
@@ -21,15 +29,38 @@ public class IdentityUtils {
         return email.trim().toLowerCase();
     }
 
+    /**
+     * Dạng chuẩn của SĐT là dạng nội địa có số 0 đầu: {@code 0912345678}.
+     * {@code +84 912 345 678}, {@code 84912345678}, {@code 0084912345678} đều về cùng dạng này.
+     */
     public static String normalizePhone(String phone) {
         if (!StringUtils.hasText(phone)) {
             return null;
         }
         String digits = phone.replaceAll("[^0-9]", "");
+        // Dạng gọi quốc tế viết 00 thay cho dấu '+'
+        if (digits.startsWith("00")) {
+            digits = digits.substring(2);
+        }
         if (digits.startsWith("84") && digits.length() > 9) {
             digits = "0" + digits.substring(2);
         }
-        return digits.trim();
+        // Trả null thay vì chuỗi rỗng: chuỗi rỗng lọt vào DB sẽ khiến findByPhone("") khớp hàng loạt.
+        return StringUtils.hasText(digits) ? digits : null;
+    }
+
+    /**
+     * Dạng chuẩn của CCCD/CMND và MST: bỏ mọi khoảng trắng, in hoa.
+     *
+     * <p>KHÔNG bỏ dấu gạch ngang: với MST, {@code 0101234567-001} là chi nhánh còn
+     * {@code 0101234567} là trụ sở — hai pháp nhân khác nhau, gộp lại là sai.
+     */
+    public static String normalizeIdentityNo(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String cleaned = value.replaceAll("\\s+", "").toUpperCase();
+        return StringUtils.hasText(cleaned) ? cleaned : null;
     }
 
     public static String normalizeName(String name) {

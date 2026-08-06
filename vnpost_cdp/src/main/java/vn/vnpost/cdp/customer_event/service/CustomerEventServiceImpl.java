@@ -86,7 +86,7 @@ public class CustomerEventServiceImpl implements CustomerEventService {
 
         MasterProfile profile = null;
 
-        if (sourceRecord != null) {
+        if (sourceRecord != null && sourceRecord.getMasterProfileId() != null) {
             profile = masterProfileRepository.findById(sourceRecord.getMasterProfileId())
                     .orElse(null);
 
@@ -94,6 +94,13 @@ public class CustomerEventServiceImpl implements CustomerEventService {
                 log.warn("CustomerEventService - masterProfileId={} referenced by sourceRecord not found, treating as UNMATCHED",
                         sourceRecord.getMasterProfileId());
             }
+        } else if (sourceRecord != null) {
+            // Nhánh CONFLICT/REJECT của luồng ingest để masterProfileId = null. Không chặn null ở đây
+            // thì findById(null) ném InvalidDataAccessApiUsageException, consumer bắt exception rồi vẫn
+            // acknowledge() → event MẤT HẲN, không có cả dòng UNMATCHED để truy lại.
+            log.warn("CustomerEventService - sourceRecord id={} chưa gắn masterProfileId "
+                            + "(ingest ra CONFLICT/REJECT), treating as UNMATCHED",
+                    sourceRecord.getId());
         }
 
         boolean matched = profile != null;

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.Subquery;
+import lombok.RequiredArgsConstructor;
 import vn.vnpost.cdp.ingestion.dto.NormalizedProfileData;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -33,6 +34,7 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 @Transactional
+@RequiredArgsConstructor
 public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateService {
 
     private static final short STATUS_PENDING  = 0;
@@ -44,19 +46,43 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     private static final short PROFILE_MERGED  = 3;
     private static final short PROFILE_DELETED = 5;
 
-    /** Dưới ngưỡng này thì nhóm được đánh dấu "tin cậy thấp" để UI cảnh báo. */
-    private static final BigDecimal LOW_CONFIDENCE_THRESHOLD = BigDecimal.valueOf(60);
+    // Mọi con số dưới đây định nghĩa ở IdentityMatchThresholds — nơi duy nhất, vì API bảng rule
+    // cũng đọc từ đó. Xem Javadoc của lớp ấy để biết lý do chọn từng mốc.
 
-    /**
-     * Điểm gán cho cặp khớp khóa mạnh (deterministic). Cố tình KHÔNG dùng 100 để phân biệt với
-     * trường hợp điểm cộng dồn (additive) bị cap về 100 — nhìn score là biết candidate đến từ
-     * nhánh nào. CCCD cao hơn MST vì là định danh cá nhân duy nhất, còn MST có thể bị dùng chung.
-     */
-    private static final BigDecimal DETERMINISTIC_SCORE_IDENTITY = BigDecimal.valueOf(98);
-    private static final BigDecimal DETERMINISTIC_SCORE_TAX      = BigDecimal.valueOf(96);
+    /** Dưới ngưỡng này thì nhóm được đánh dấu "tin cậy thấp" để UI cảnh báo. */
+    private static final BigDecimal LOW_CONFIDENCE_THRESHOLD =
+            BigDecimal.valueOf(IdentityMatchThresholds.LOW_CONFIDENCE_FLAG_SCORE);
+
+    private static final BigDecimal DETERMINISTIC_SCORE_IDENTITY =
+            BigDecimal.valueOf(IdentityMatchThresholds.DETERMINISTIC_IDENTITY_NO);
+    private static final BigDecimal DETERMINISTIC_SCORE_TAX =
+            BigDecimal.valueOf(IdentityMatchThresholds.DETERMINISTIC_TAX_CODE);
+    private static final BigDecimal DETERMINISTIC_SCORE_TYPED_ID =
+            BigDecimal.valueOf(IdentityMatchThresholds.DETERMINISTIC_TYPED_ID);
+
+    /** Các loại identity_link được coi là khóa duy nhất do nguồn cấp — KHÔNG gồm DEVICE_ID/COOKIE_ID
+     *  (để dành cho Probabilistic Matching sau này, tránh false-positive khi auto-merge). */
+    private static final List<String> UNIQUE_TYPED_IDENTITY_TYPES =
+            IdentityMatchThresholds.UNIQUE_TYPED_IDENTITY_TYPES;
 
     /** Ngưỡng tên "không lệch quá xa", nhất quán với scorer và ProfileMergeDecisionService. */
-    private static final double NAME_SIMILARITY_MIN = 75;
+    private static final double NAME_SIMILARITY_MIN = IdentityMatchThresholds.NAME_SIMILARITY_MIN;
+
+    /**
+     * Sàn tạo candidate. Dưới ngưỡng này, match quá yếu (VD chỉ khớp tên, 30đ) không đủ cơ sở để
+     * gợi ý — nhất là với tên tiếng Việt vốn rất dễ trùng lặp (VD "Nguyễn Văn A"), sẽ sinh nhiễu.
+     * 35 vẫn bắt được "chỉ SĐT trùng" (40đ) và "chỉ email trùng" (35đ) làm gợi ý tin cậy thấp thay
+     * vì bị âm thầm bỏ qua như trước.
+     */
+    private static final BigDecimal MIN_CANDIDATE_SCORE =
+            BigDecimal.valueOf(IdentityMatchThresholds.LOW_CONFIDENCE_SCORE);
+
+    /** Một giá trị khóa khớp nhiều hơn ngưỡng này thì coi như khóa rác, không dùng để ghép cặp. */
+    private static final int MAX_PROFILES_PER_KEY = IdentityMatchThresholds.MAX_PROFILES_PER_KEY;
+
+    /** Candidate từng bị IGNORED/REJECTED chỉ được tạo lại nếu điểm mới cao hơn ít nhất mức này. */
+    private static final BigDecimal MIN_SCORE_IMPROVEMENT =
+            BigDecimal.valueOf(IdentityMatchThresholds.RECREATE_SCORE_IMPROVEMENT);
 
     private static final List<String> SOURCE_PRIORITY = List.of("CRM", "MYVNPOST", "PORTAL", "CMS");
 
@@ -75,36 +101,6 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     private final UnomiService unomiService;
     private final ObjectMapper objectMapper;
 
-    public ProfileMatchCandidateServiceImpl(
-            ProfileMatchCandidateRepository candidateRepository,
-            ProfileMatchReasonRepository reasonRepository,
-            MasterProfileRepository masterProfileRepository,
-            ProfileIdentityLinkRepository identityLinkRepository,
-            ProfileAttributeValueRepository attributeValueRepository,
-            ProfileChangeLogRepository changeLogRepository,
-            ProfileMergeRequestRepository mergeRequestRepository,
-            ProfileUnomiSyncLogRepository unomiSyncLogRepository,
-            ProfileSourceRecordRepository sourceRecordRepository,
-            ProfileMergeConflictRepository conflictRepository,
-            CustomerEventRepository customerEventRepository,
-            ProfileMatchScoreService scoreService,
-            UnomiService unomiService,
-            ObjectMapper objectMapper) {
-        this.candidateRepository = candidateRepository;
-        this.reasonRepository = reasonRepository;
-        this.masterProfileRepository = masterProfileRepository;
-        this.identityLinkRepository = identityLinkRepository;
-        this.attributeValueRepository = attributeValueRepository;
-        this.changeLogRepository = changeLogRepository;
-        this.mergeRequestRepository = mergeRequestRepository;
-        this.unomiSyncLogRepository = unomiSyncLogRepository;
-        this.sourceRecordRepository = sourceRecordRepository;
-        this.conflictRepository = conflictRepository;
-        this.customerEventRepository = customerEventRepository;
-        this.scoreService = scoreService;
-        this.unomiService = unomiService;
-        this.objectMapper = objectMapper;
-    }
 
     // =====================================================================
     // CREATE CANDIDATE
@@ -121,7 +117,7 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         ProfileMatchScoreResult scoreResult = resolveMatch(left, right);
         BigDecimal newScore = scoreResult.getScore();
 
-        if (newScore.compareTo(BigDecimal.valueOf(70)) < 0) {
+        if (newScore.compareTo(MIN_CANDIDATE_SCORE) < 0) {
             throw new BusinessException("SCORE_TOO_LOW", "Match score is too low to create a candidate");
         }
 
@@ -137,7 +133,7 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
 
             if (existingStatus == STATUS_IGNORED || existingStatus == STATUS_REJECTED) {
                 BigDecimal diff = newScore.subtract(existing.getMatchScore());
-                if (diff.compareTo(BigDecimal.TEN) < 0) {
+                if (diff.compareTo(MIN_SCORE_IMPROVEMENT) < 0) {
                     throw new BusinessException("SCORE_NOT_IMPROVED",
                             "New score must be at least 10 points higher than previous ignored/rejected candidate to recreate");
                 }
@@ -579,27 +575,37 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         Set<Long> candidateProfileIds = new LinkedHashSet<>();
 
         if (StringUtils.hasText(profile.getIdentityNo())) {
-            masterProfileRepository.findByIdentityNo(profile.getIdentityNo())
-                    .filter(p -> !p.getId().equals(masterProfileId))
-                    .ifPresent(p -> candidateProfileIds.add(p.getId()));
+            addToPool(masterProfileRepository.findByIdentityNo(profile.getIdentityNo()),
+                    masterProfileId, candidateProfileIds, "CCCD");
         }
         // MST phải có trong pool, nếu không nhánh deterministic MST của resolveMatch() không bao giờ
         // được kích hoạt từ luồng detect: hai hồ sơ doanh nghiệp trùng MST nhưng khác
         // CCCD/SĐT/email sẽ không bao giờ được ghép cặp để so.
         if (StringUtils.hasText(profile.getTaxCode())) {
-            masterProfileRepository.findByTaxCode(profile.getTaxCode())
-                    .filter(p -> !p.getId().equals(masterProfileId))
-                    .ifPresent(p -> candidateProfileIds.add(p.getId()));
+            addToPool(masterProfileRepository.findByTaxCode(profile.getTaxCode()),
+                    masterProfileId, candidateProfileIds, "MST");
         }
         if (StringUtils.hasText(profile.getPhone())) {
-            masterProfileRepository.findByPhone(profile.getPhone())
-                    .filter(p -> !p.getId().equals(masterProfileId))
-                    .ifPresent(p -> candidateProfileIds.add(p.getId()));
+            addToPool(masterProfileRepository.findByPhone(profile.getPhone()),
+                    masterProfileId, candidateProfileIds, "SĐT");
         }
         if (StringUtils.hasText(profile.getEmail())) {
-            masterProfileRepository.findByEmail(profile.getEmail())
-                    .filter(p -> !p.getId().equals(masterProfileId))
-                    .ifPresent(p -> candidateProfileIds.add(p.getId()));
+            addToPool(masterProfileRepository.findByEmail(profile.getEmail()),
+                    masterProfileId, candidateProfileIds, "email");
+        }
+        // Khóa duy nhất do nguồn cấp (KHL_CODE/CRM_ID/POST_ID/APP_USER_ID/PAYMENT_ID) — mirror
+        // FP2c của ProfileMergeDecisionService. Thiếu bước này thì 2 hồ sơ trùng PostID nhưng khác
+        // CCCD/MST/SĐT/email sẽ không bao giờ được ghép cặp để so ở luồng admin.
+        for (ProfileIdentityLink ownLink : identityLinkRepository.findByMasterProfileIdAndStatus(masterProfileId, (short) 1)) {
+            if (!UNIQUE_TYPED_IDENTITY_TYPES.contains(ownLink.getIdentityType())) {
+                continue;
+            }
+            identityLinkRepository.findByIdentityTypeAndIdentityValue(ownLink.getIdentityType(), ownLink.getIdentityValue())
+                    .stream()
+                    .filter(l -> l.getStatus() != null && l.getStatus() == 1)
+                    .map(ProfileIdentityLink::getMasterProfileId)
+                    .filter(id -> !id.equals(masterProfileId))
+                    .forEach(candidateProfileIds::add);
         }
 
         log.info("ProfileMatchCandidateServiceImpl - detectAndCreate: profile={}, candidate pool size={}",
@@ -618,7 +624,7 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
                 }
 
                 ProfileMatchScoreResult scoreResult = resolveMatch(profile, candidateProfile);
-                if (scoreResult.getScore().compareTo(BigDecimal.valueOf(70)) < 0) {
+                if (scoreResult.getScore().compareTo(MIN_CANDIDATE_SCORE) < 0) {
                     log.debug("ProfileMatchCandidateServiceImpl - score {} too low for pair ({},{})",
                             scoreResult.getScore(), masterProfileId, candidateProfileId);
                     continue;
@@ -646,7 +652,7 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
                     ProfileMatchCandidate existing = existingOpt.get();
                     if (existing.getStatus() == STATUS_IGNORED || existing.getStatus() == STATUS_REJECTED) {
                         BigDecimal diff = scoreResult.getScore().subtract(existing.getMatchScore());
-                        if (diff.compareTo(BigDecimal.TEN) < 0) {
+                        if (diff.compareTo(MIN_SCORE_IMPROVEMENT) < 0) {
                             continue;
                         }
                         existing.setStatus(STATUS_EXPIRED);
@@ -693,8 +699,8 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
 
         // 1. CCCD — khóa mạnh nhất, ưu tiên tuyệt đối trên MST: khớp hay lệch CCCD đều là quyết
         // định cuối, không xét MST nữa (giống ingestion).
-        String leftIdentityNo  = IdentityUtils.normalizeText(left.getIdentityNo());
-        String rightIdentityNo = IdentityUtils.normalizeText(right.getIdentityNo());
+        String leftIdentityNo  = IdentityUtils.normalizeIdentityNo(left.getIdentityNo());
+        String rightIdentityNo = IdentityUtils.normalizeIdentityNo(right.getIdentityNo());
         if (StringUtils.hasText(leftIdentityNo) && StringUtils.hasText(rightIdentityNo)) {
             if (!leftIdentityNo.equals(rightIdentityNo)) {
                 log.info("ProfileMatchCandidateServiceImpl - resolveMatch pair ({},{}): identityNo conflict "
@@ -708,8 +714,8 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         }
 
         // 2. MST — định danh mạnh của khách doanh nghiệp. Chỉ xét khi không so được CCCD.
-        String leftTaxCode  = IdentityUtils.normalizeText(left.getTaxCode());
-        String rightTaxCode = IdentityUtils.normalizeText(right.getTaxCode());
+        String leftTaxCode  = IdentityUtils.normalizeIdentityNo(left.getTaxCode());
+        String rightTaxCode = IdentityUtils.normalizeIdentityNo(right.getTaxCode());
         if (StringUtils.hasText(leftTaxCode) && StringUtils.hasText(rightTaxCode)) {
             if (!leftTaxCode.equals(rightTaxCode)) {
                 log.info("ProfileMatchCandidateServiceImpl - resolveMatch pair ({},{}): taxCode conflict "
@@ -732,8 +738,77 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
             return scoreResult;
         }
 
-        // 3. Không có khóa mạnh nào so được cả hai bên → probabilistic thuần như trước.
+        // 3. Khóa duy nhất do nguồn cấp (KHL_CODE/CRM_ID/POST_ID/APP_USER_ID/PAYMENT_ID) — chỉ xét
+        // khi không so được CCCD lẫn MST. Mirror FP2c của ProfileMergeDecisionService (ingestion).
+        if (matchedByUniqueTypedId(left, right)) {
+            return promoteDeterministic(scoreResult, DETERMINISTIC_SCORE_TYPED_ID,
+                    "typed identifier match", left, right);
+        }
+
+        // 4. Không có khóa mạnh nào so được cả hai bên → probabilistic thuần như trước.
         return scoreResult;
+    }
+
+    /**
+     * Kiểm tra 2 hồ sơ có cùng chia sẻ ít nhất một giá trị ACTIVE của cùng một loại khóa duy nhất
+     * do nguồn cấp ({@link #UNIQUE_TYPED_IDENTITY_TYPES}) hay không.
+     *
+     * <p>Nạp link của mỗi hồ sơ đúng MỘT lần rồi group theo type: hàm này nằm trong vòng lặp của
+     * {@code detectAndCreateCandidatesForProfile}, nếu query lại cho từng type thì thành 5 query mỗi
+     * hồ sơ (10 mỗi cặp) trong khi tất cả đều là cùng một câu truy vấn.
+     */
+    private boolean matchedByUniqueTypedId(MasterProfile left, MasterProfile right) {
+        Map<String, Set<String>> leftByType = activeTypedIdentityValues(left.getId());
+        if (leftByType.isEmpty()) {
+            return false;
+        }
+        Map<String, Set<String>> rightByType = activeTypedIdentityValues(right.getId());
+        for (Map.Entry<String, Set<String>> entry : leftByType.entrySet()) {
+            Set<String> rightValues = rightByType.get(entry.getKey());
+            if (rightValues == null) {
+                continue;
+            }
+            if (entry.getValue().stream().anyMatch(rightValues::contains)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Giá trị các khóa typed đang ACTIVE của một hồ sơ, nhóm theo identityType. */
+    private Map<String, Set<String>> activeTypedIdentityValues(Long masterProfileId) {
+        Map<String, Set<String>> byType = new HashMap<>();
+        for (ProfileIdentityLink link : identityLinkRepository
+                .findByMasterProfileIdAndStatus(masterProfileId, (short) 1)) {
+            if (!UNIQUE_TYPED_IDENTITY_TYPES.contains(link.getIdentityType())
+                    || !StringUtils.hasText(link.getIdentityValue())) {
+                continue;
+            }
+            byType.computeIfAbsent(link.getIdentityType(), k -> new HashSet<>())
+                    .add(link.getIdentityValue());
+        }
+        return byType;
+    }
+
+    /**
+     * Thêm id của các hồ sơ tìm được vào pool, bỏ chính hồ sơ đang xét.
+     *
+     * <p>Nếu một giá trị khóa khớp quá nhiều hồ sơ thì nó không còn tính phân biệt — thực tế là SĐT
+     * rác / hotline shipper / "0000000000". Ghép cặp với tất cả sẽ sinh hàng loạt candidate nhiễu và
+     * làm ngập màn đối soát, nên bỏ qua khóa đó và ghi log để đội dữ liệu biết mà xử lý.
+     */
+    private void addToPool(List<MasterProfile> found, Long selfId, Set<Long> pool, String keyLabel) {
+        if (found.size() > MAX_PROFILES_PER_KEY) {
+            log.warn("ProfileMatchCandidateServiceImpl - {} hồ sơ cùng {} (> {}) → khóa không có tính "
+                            + "phân biệt, bỏ qua để tránh sinh candidate hàng loạt. profileId={}",
+                    found.size(), keyLabel, MAX_PROFILES_PER_KEY, selfId);
+            return;
+        }
+        for (MasterProfile p : found) {
+            if (!p.getId().equals(selfId)) {
+                pool.add(p.getId());
+            }
+        }
     }
 
     /**
@@ -1185,9 +1260,9 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     /** Cùng thang với {@code ProfileMatchScoreService.resolveMatchLevel} để badge trên 2 màn khớp nhau. */
     private String resolveMatchLevel(BigDecimal score) {
         if (score == null) return "LOW";
-        if (score.compareTo(BigDecimal.valueOf(95)) >= 0) return "VERY_HIGH";
-        if (score.compareTo(BigDecimal.valueOf(85)) >= 0) return "HIGH";
-        if (score.compareTo(BigDecimal.valueOf(70)) >= 0) return "MEDIUM";
+        if (score.compareTo(BigDecimal.valueOf(IdentityMatchThresholds.LEVEL_VERY_HIGH)) >= 0) return "VERY_HIGH";
+        if (score.compareTo(BigDecimal.valueOf(IdentityMatchThresholds.LEVEL_HIGH)) >= 0) return "HIGH";
+        if (score.compareTo(BigDecimal.valueOf(IdentityMatchThresholds.LEVEL_MEDIUM)) >= 0) return "MEDIUM";
         return "LOW";
     }
 

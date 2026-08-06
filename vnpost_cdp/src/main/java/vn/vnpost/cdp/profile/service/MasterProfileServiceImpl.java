@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import vn.vnpost.cdp.common.exception.BusinessException;
+import vn.vnpost.cdp.common.utils.IdentityUtils;
 import vn.vnpost.cdp.profile.dto.MasterProfileCreateRequest;
 import vn.vnpost.cdp.profile.dto.MasterProfileResponse;
 import vn.vnpost.cdp.profile.dto.MasterProfileUpdateRequest;
@@ -56,11 +57,13 @@ public class MasterProfileServiceImpl implements MasterProfileService {
         MasterProfile profile = new MasterProfile();
         profile.setProfileCode(request.getProfileCode());
         profile.setFullName(request.getFullName());
-        profile.setPhone(request.getPhone());
-        profile.setEmail(request.getEmail());
+        // Chuẩn hoá y như luồng ingest: hồ sơ tạo tay mà lưu "+84 912 345 678" thì pool candidate
+        // (query bằng dạng chuẩn "0912345678") sẽ không bao giờ tìm thấy nó.
+        profile.setPhone(IdentityUtils.normalizePhone(request.getPhone()));
+        profile.setEmail(IdentityUtils.normalizeEmail(request.getEmail()));
         profile.setGender(request.getGender());
         profile.setDateOfBirth(request.getDateOfBirth());
-        profile.setIdentityNo(request.getIdentityNo());
+        profile.setIdentityNo(IdentityUtils.normalizeIdentityNo(request.getIdentityNo()));
         profile.setCustomerType(request.getCustomerType());
         profile.setProvinceCode(request.getProvinceCode());
         profile.setProvinceName(request.getProvinceName());
@@ -87,10 +90,10 @@ public class MasterProfileServiceImpl implements MasterProfileService {
             profile.setFullName(request.getFullName());
         }
         if (request.getPhone() != null) {
-            profile.setPhone(request.getPhone());
+            profile.setPhone(IdentityUtils.normalizePhone(request.getPhone()));
         }
         if (request.getEmail() != null) {
-            profile.setEmail(request.getEmail());
+            profile.setEmail(IdentityUtils.normalizeEmail(request.getEmail()));
         }
         if (request.getGender() != null) {
             profile.setGender(request.getGender());
@@ -99,7 +102,7 @@ public class MasterProfileServiceImpl implements MasterProfileService {
             profile.setDateOfBirth(request.getDateOfBirth());
         }
         if (request.getIdentityNo() != null) {
-            profile.setIdentityNo(request.getIdentityNo());
+            profile.setIdentityNo(IdentityUtils.normalizeIdentityNo(request.getIdentityNo()));
         }
         if (request.getCustomerType() != null) {
             profile.setCustomerType(request.getCustomerType());

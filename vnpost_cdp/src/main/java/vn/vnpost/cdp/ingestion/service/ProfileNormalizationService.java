@@ -2,6 +2,7 @@ package vn.vnpost.cdp.ingestion.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import vn.vnpost.cdp.common.utils.IdentityUtils;
 import vn.vnpost.cdp.ingestion.dto.NormalizedProfileData;
 import vn.vnpost.cdp.ingestion.dto.ProfileIngestionMessage;
 
@@ -114,22 +115,21 @@ public class ProfileNormalizationService {
         return s.trim().replaceAll("\\s+", " ");
     }
 
+    // Uỷ quyền cho IdentityUtils — bộ chuẩn hoá duy nhất. Trước đây hàm normalizePhone riêng ở đây
+    // chỉ bỏ khoảng trắng/gạch nên giữ nguyên "+84912345678", trong khi pool candidate và scorer so
+    // sánh bằng IdentityUtils (ra "0912345678"): hai hồ sơ cùng một người từ hai nguồn ghi khác dạng
+    // không bao giờ tìm thấy nhau.
+
     private String normalizePhone(String s) {
-        if (s == null || s.isBlank()) return null;
-        // Keep digits and optional leading '+'
-        String cleaned = s.replaceAll("[\\s\\-]", "");
-        if (cleaned.isBlank()) return null;
-        return cleaned;
+        return IdentityUtils.normalizePhone(s);
     }
 
     private String normalizeEmail(String s) {
-        if (s == null || s.isBlank()) return null;
-        return s.trim().toLowerCase();
+        return IdentityUtils.normalizeEmail(s);
     }
 
     private String normalizeIdentityNo(String s) {
-        if (s == null || s.isBlank()) return null;
-        return s.trim().replaceAll("\\s+", "");
+        return IdentityUtils.normalizeIdentityNo(s);
     }
 
     private LocalDate parseDate(String s) {
