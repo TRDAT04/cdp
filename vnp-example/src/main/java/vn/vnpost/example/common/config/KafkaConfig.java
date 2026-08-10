@@ -1,4 +1,4 @@
-package vn.vnpost.example.config;
+package vn.vnpost.example.common.config;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;

@@ -11,7 +11,7 @@ import vn.vnpost.example.profile.entity.*;
 import vn.vnpost.example.profile.enums.IdentityType;
 import vn.vnpost.example.profile.repository.*;
 import vn.vnpost.example.profile.service.ProfileMergeEngineService;
-import vn.vnpost.example.security.SecurityUtils;
+import vn.vnpost.example.common.security.SecurityUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;

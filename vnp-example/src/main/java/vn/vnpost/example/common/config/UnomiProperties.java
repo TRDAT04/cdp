@@ -1,4 +1,4 @@
-package vn.vnpost.example.config;
+package vn.vnpost.example.common.config;
 
 import lombok.Getter;
 import lombok.Setter;

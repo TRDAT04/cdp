@@ -13,6 +13,7 @@ import reactor.core.publisher.Mono;
 import vn.vnpost.example.common.response.MethodResult;
 import vn.vnpost.example.rule.dto.RuleRequest;
 import vn.vnpost.example.rule.service.RuleEngineService;
+import vn.vnpost.shared.sercurity.CheckPermission;
 
 import java.util.List;
 
@@ -25,6 +26,7 @@ public class RuleController {
     private final RuleEngineService ruleEngineService;
 
     @GetMapping
+    @CheckPermission(index = 1,title = "Xem danh sách rule")
     public Mono<ResponseEntity<MethodResult>> getAllRules(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
@@ -40,6 +42,7 @@ public class RuleController {
     }
 
     @GetMapping("/{ruleId}")
+    @CheckPermission(index = 2,title ="Xem chi tiết rule" )
     public Mono<ResponseEntity<MethodResult>> getRuleDetail(@PathVariable String ruleId) {
         return ruleEngineService.getRuleLogsByRuleId(ruleId)
                 .map(logs -> ResponseEntity.ok(MethodResult.success(logs)));
@@ -62,6 +65,10 @@ public class RuleController {
     }
 
     @PostMapping("/deploy")
+    @CheckPermission(
+            index = 5,
+            title = "Deploy Rule"
+    )
     public Mono<ResponseEntity<MethodResult>> deployRule(@Valid @RequestBody RuleRequest request) {
         return ruleEngineService.deployRule(request)
                 .map(result -> ResponseEntity.ok(MethodResult.success(result)));

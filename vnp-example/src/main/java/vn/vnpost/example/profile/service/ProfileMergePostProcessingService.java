@@ -10,7 +10,7 @@ import vn.vnpost.example.profile.entity.ProfileUnomiSyncLog;
 import vn.vnpost.example.profile.repository.MasterProfileRepository;
 import vn.vnpost.example.profile.repository.ProfileUnomiSyncLogRepository;
 import vn.vnpost.example.profile.service.match.ProfileMatchCandidateService;
-import vn.vnpost.example.security.SecurityUtils;
+import vn.vnpost.example.common.security.SecurityUtils;
 import vn.vnpost.example.unomi.service.UnomiService;
 
 import java.time.LocalDateTime;

@@ -13,11 +13,11 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 import vn.vnpost.example.common.exception.BusinessException;
-import vn.vnpost.example.config.UnomiProperties;
+import vn.vnpost.example.common.config.UnomiProperties;
 import vn.vnpost.example.rule.dto.*;
 import vn.vnpost.example.rule.entity.RuleDeployLog;
 import vn.vnpost.example.rule.repository.RuleDeployLogRepository;
-import vn.vnpost.example.security.SecurityUtils;
+import vn.vnpost.example.common.security.SecurityUtils;
 
 import java.time.Instant;
 import java.util.*;

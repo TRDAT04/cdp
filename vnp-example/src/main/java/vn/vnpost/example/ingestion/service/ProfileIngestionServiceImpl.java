@@ -15,7 +15,7 @@ import vn.vnpost.example.profile.entity.ProfileSourceRecord;
 import vn.vnpost.example.profile.repository.ProfileSourceRecordRepository;
 import vn.vnpost.example.profile.service.ProfileMergePostProcessingService;
 import vn.vnpost.example.profile.service.match.ProfileMatchCandidateService;
-import vn.vnpost.example.security.SecurityUtils;
+import vn.vnpost.example.common.security.SecurityUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;

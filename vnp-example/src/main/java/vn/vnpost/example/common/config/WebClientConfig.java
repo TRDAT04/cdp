@@ -1,4 +1,4 @@
-package vn.vnpost.example.config;
+package vn.vnpost.example.common.config;
 
 import io.netty.channel.ChannelOption;
 import io.netty.handler.timeout.ReadTimeoutHandler;
@@ -52,4 +52,5 @@ public class WebClientConfig {
                 .defaultHeader(HttpHeaders.AUTHORIZATION, basicAuth)
                 .build();
     }
+
 }

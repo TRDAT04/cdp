@@ -35,7 +35,7 @@ import vn.vnpost.example.profile.repository.ProfileMatchCandidateRepository;
 import vn.vnpost.example.profile.repository.ProfileMatchReasonRepository;
 import vn.vnpost.example.profile.repository.ProfileMergeRequestRepository;
 import vn.vnpost.example.profile.repository.ProfileUnomiSyncLogRepository;
-import vn.vnpost.example.security.SecurityUtils;
+import vn.vnpost.example.common.security.SecurityUtils;
 import vn.vnpost.example.unomi.service.UnomiService;
 
 import org.springframework.transaction.annotation.Transactional;
