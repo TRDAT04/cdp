@@ -1,56 +1,56 @@
 package vn.vnpost.cdp.profile.entity;
 
-import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
-import vn.vnpost.cdp.common.entity.BaseEntity;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
+import vn.vnpost.cdp.common.entity.BaseAuditFields;
 
 import java.time.LocalDateTime;
 
 @Getter
 @Setter
-@Entity
-@Table(name = "profile_merge_conflicts")
-public class ProfileMergeConflict extends BaseEntity {
+@Table("profile_merge_conflicts")
+public class ProfileMergeConflict extends BaseAuditFields {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
+    @Column("id")
     private Long id;
 
-    @Column(name = "master_profile_id", nullable = false)
+    @Column("master_profile_id")
     private Long masterProfileId;
 
-    @Column(name = "source_record_id")
+    @Column("source_record_id")
     private Long sourceRecordId;
 
-    @Column(name = "property_name", length = 200)
+    @Column("property_name")
     private String propertyName;
 
-    @Column(name = "current_value")
+    @Column("current_value")
     private String currentValue;
 
-    @Column(name = "incoming_value")
+    @Column("incoming_value")
     private String incomingValue;
 
-    @Column(name = "current_source", length = 100)
+    @Column("current_source")
     private String currentSource;
 
-    @Column(name = "incoming_source", length = 100)
+    @Column("incoming_source")
     private String incomingSource;
 
-    @Column(name = "conflict_reason")
+    @Column("conflict_reason")
     private String conflictReason;
 
-    @Column(name = "resolution_status", nullable = false)
+    @Column("resolution_status")
     private Short resolutionStatus = 0;
 
-    @Column(name = "resolved_value")
+    @Column("resolved_value")
     private String resolvedValue;
 
-    @Column(name = "resolved_by", length = 100)
+    @Column("resolved_by")
     private String resolvedBy;
 
-    @Column(name = "resolved_at")
+    @Column("resolved_at")
     private LocalDateTime resolvedAt;
 }

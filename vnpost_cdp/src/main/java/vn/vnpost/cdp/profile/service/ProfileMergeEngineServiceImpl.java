@@ -3,12 +3,14 @@ package vn.vnpost.cdp.profile.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.profile.entity.ProfileAttributeValue;
 import vn.vnpost.cdp.profile.entity.ProfileMergeRule;
 import vn.vnpost.cdp.profile.repository.ProfileAttributeValueRepository;
 import vn.vnpost.cdp.profile.repository.ProfileMergeRuleRepository;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -19,34 +21,35 @@ public class ProfileMergeEngineServiceImpl implements ProfileMergeEngineService 
     private final ProfileAttributeValueRepository attributeRepository;
 
     @Override
-    public boolean shouldOverwrite(Long masterProfileId, String propertyName, String incomingSource, LocalDateTime incomingReceivedAt) {
+    public Mono<Boolean> shouldOverwrite(Long masterProfileId, String propertyName, String incomingSource,
+                                          LocalDateTime incomingReceivedAt) {
         log.info("MergeEngine - evaluating overwrite: masterProfileId={}, property={}, incomingSource={}",
                 masterProfileId, propertyName, incomingSource);
 
-        ProfileAttributeValue selected = attributeRepository
+        return attributeRepository
                 .findFirstByMasterProfileIdAndPropertyNameAndIsSelectedTrue(masterProfileId, propertyName)
-                .orElse(null);
+                .flatMap(selected -> {
+                    String currentSource = selected.getSourceSystem();
 
-        if (selected == null) {
-            log.info("MergeEngine - no selected value -> allow overwrite");
-            return true;
-        }
+                    if (incomingSource.equalsIgnoreCase(currentSource)) {
+                        log.info("MergeEngine - same source -> allow overwrite");
+                        return Mono.just(true);
+                    }
 
-        String currentSource = selected.getSourceSystem();
+                    Mono<ProfileMergeRule> currentRuleMono = ruleRepository
+                            .findByPropertyNameAndSourceSystemAndStatus(propertyName, currentSource, (short) 1);
+                    Mono<ProfileMergeRule> incomingRuleMono = ruleRepository
+                            .findByPropertyNameAndSourceSystemAndStatus(propertyName, incomingSource, (short) 1);
 
-        if (incomingSource.equalsIgnoreCase(currentSource)) {
-            log.info("MergeEngine - same source -> allow overwrite");
-            return true;
-        }
+                    return Mono.zip(optional(currentRuleMono), optional(incomingRuleMono))
+                            .map(t -> evaluate(t.getT1().orElse(null), t.getT2().orElse(null),
+                                    selected, incomingReceivedAt));
+                })
+                .defaultIfEmpty(true); // no selected value -> allow overwrite (log matches original "no selected value" branch)
+    }
 
-        ProfileMergeRule currentRule = ruleRepository
-                .findByPropertyNameAndSourceSystemAndStatus(propertyName, currentSource, (short) 1)
-                .orElse(null);
-
-        ProfileMergeRule incomingRule = ruleRepository
-                .findByPropertyNameAndSourceSystemAndStatus(propertyName, incomingSource, (short) 1)
-                .orElse(null);
-
+    private boolean evaluate(ProfileMergeRule currentRule, ProfileMergeRule incomingRule,
+                              ProfileAttributeValue selected, LocalDateTime incomingReceivedAt) {
         if (currentRule == null || incomingRule == null) {
             log.warn("MergeEngine - missing rule config -> deny overwrite");
             return false;
@@ -135,5 +138,9 @@ public class ProfileMergeEngineServiceImpl implements ProfileMergeEngineService 
         log.info("MergeEngine - fallback priority decision={}", result);
 
         return result;
+    }
+
+    private static <T> Mono<Optional<T>> optional(Mono<T> mono) {
+        return mono.map(Optional::of).defaultIfEmpty(Optional.empty());
     }
 }

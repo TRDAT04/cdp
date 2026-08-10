@@ -1,40 +1,61 @@
 package vn.vnpost.cdp.profile.service.match;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.persistence.criteria.Predicate;
-import jakarta.persistence.criteria.Root;
-import jakarta.persistence.criteria.Subquery;
-import lombok.RequiredArgsConstructor;
-import vn.vnpost.cdp.ingestion.dto.NormalizedProfileData;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.r2dbc.core.R2dbcEntityTemplate;
+import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import tools.jackson.databind.ObjectMapper;
 import vn.vnpost.cdp.common.exception.BusinessException;
 import vn.vnpost.cdp.common.utils.IdentityUtils;
-import vn.vnpost.cdp.customer_event.repository.CustomerEventRepository;
-import vn.vnpost.cdp.profile.dto.match.*;
-import vn.vnpost.cdp.profile.entity.*;
-import vn.vnpost.cdp.profile.enums.CustomerType;
-import vn.vnpost.cdp.profile.repository.*;
-import vn.vnpost.cdp.security.SecurityUtils;
+import vn.vnpost.cdp.ingestion.dto.NormalizedProfileData;
+import vn.vnpost.cdp.profile.dto.match.ProfileCandidateMergeRequest;
+import vn.vnpost.cdp.profile.dto.match.ProfileMatchCandidateResponse;
+import vn.vnpost.cdp.profile.dto.match.ProfileMatchCandidateSearchRequest;
+import vn.vnpost.cdp.profile.dto.match.ProfileMatchReasonCreateItem;
+import vn.vnpost.cdp.profile.dto.match.ProfileMatchReasonResponse;
+import vn.vnpost.cdp.profile.dto.match.ProfileMatchScoreResult;
+import vn.vnpost.cdp.profile.dto.match.ProfileMatchSideResponse;
+import vn.vnpost.cdp.profile.entity.MasterProfile;
+import vn.vnpost.cdp.profile.entity.ProfileAttributeValue;
+import vn.vnpost.cdp.profile.entity.ProfileChangeLog;
+import vn.vnpost.cdp.profile.entity.ProfileIdentityLink;
+import vn.vnpost.cdp.profile.entity.ProfileMatchCandidate;
+import vn.vnpost.cdp.profile.entity.ProfileMatchReason;
+import vn.vnpost.cdp.profile.entity.ProfileMergeRequest;
+import vn.vnpost.cdp.profile.entity.ProfileSourceRecord;
+import vn.vnpost.cdp.profile.entity.ProfileUnomiSyncLog;
+import vn.vnpost.cdp.profile.repository.MasterProfileRepository;
+import vn.vnpost.cdp.profile.repository.ProfileAttributeValueRepository;
+import vn.vnpost.cdp.profile.repository.ProfileChangeLogRepository;
+import vn.vnpost.cdp.profile.repository.ProfileIdentityLinkRepository;
+import vn.vnpost.cdp.profile.repository.ProfileMatchCandidateRepository;
+import vn.vnpost.cdp.profile.repository.ProfileMatchReasonRepository;
+import vn.vnpost.cdp.profile.repository.ProfileMergeRequestRepository;
+import vn.vnpost.cdp.profile.repository.ProfileUnomiSyncLogRepository;
+import vn.vnpost.cdp.common.security.SecurityUtils;
 import vn.vnpost.cdp.unomi.service.UnomiService;
+
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
-@Transactional
-@RequiredArgsConstructor
 public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateService {
 
     private static final short STATUS_PENDING  = 0;
@@ -48,10 +69,6 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
 
     // Mọi con số dưới đây định nghĩa ở IdentityMatchThresholds — nơi duy nhất, vì API bảng rule
     // cũng đọc từ đó. Xem Javadoc của lớp ấy để biết lý do chọn từng mốc.
-
-    /** Dưới ngưỡng này thì nhóm được đánh dấu "tin cậy thấp" để UI cảnh báo. */
-    private static final BigDecimal LOW_CONFIDENCE_THRESHOLD =
-            BigDecimal.valueOf(IdentityMatchThresholds.LOW_CONFIDENCE_FLAG_SCORE);
 
     private static final BigDecimal DETERMINISTIC_SCORE_IDENTITY =
             BigDecimal.valueOf(IdentityMatchThresholds.DETERMINISTIC_IDENTITY_NO);
@@ -86,6 +103,15 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
 
     private static final List<String> SOURCE_PRIORITY = List.of("CRM", "MYVNPOST", "PORTAL", "CMS");
 
+    private static final String SEARCH_WHERE_SQL = """
+            WHERE (:statusActive = false OR status = :status)
+              AND (:matchLevelActive = false OR match_level = :matchLevel)
+              AND (:minScoreActive = false OR match_score >= :minScore)
+              AND (:sourceSystemActive = false OR left_source_system = :sourceSystem OR right_source_system = :sourceSystem)
+              AND (:fromActive = false OR created >= :fromDate)
+              AND (:toActive = false OR created <= :toDate)
+            """;
+
     private final ProfileMatchCandidateRepository candidateRepository;
     private final ProfileMatchReasonRepository reasonRepository;
     private final MasterProfileRepository masterProfileRepository;
@@ -94,57 +120,98 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     private final ProfileChangeLogRepository changeLogRepository;
     private final ProfileMergeRequestRepository mergeRequestRepository;
     private final ProfileUnomiSyncLogRepository unomiSyncLogRepository;
-    private final ProfileSourceRecordRepository sourceRecordRepository;
-    private final ProfileMergeConflictRepository conflictRepository;
-    private final CustomerEventRepository customerEventRepository;
     private final ProfileMatchScoreService scoreService;
     private final UnomiService unomiService;
     private final ObjectMapper objectMapper;
+    private final R2dbcEntityTemplate entityTemplate;
 
+    public ProfileMatchCandidateServiceImpl(
+            ProfileMatchCandidateRepository candidateRepository,
+            ProfileMatchReasonRepository reasonRepository,
+            MasterProfileRepository masterProfileRepository,
+            ProfileIdentityLinkRepository identityLinkRepository,
+            ProfileAttributeValueRepository attributeValueRepository,
+            ProfileChangeLogRepository changeLogRepository,
+            ProfileMergeRequestRepository mergeRequestRepository,
+            ProfileUnomiSyncLogRepository unomiSyncLogRepository,
+            ProfileMatchScoreService scoreService,
+            UnomiService unomiService,
+            ObjectMapper objectMapper,
+            R2dbcEntityTemplate entityTemplate) {
+        this.candidateRepository = candidateRepository;
+        this.reasonRepository = reasonRepository;
+        this.masterProfileRepository = masterProfileRepository;
+        this.identityLinkRepository = identityLinkRepository;
+        this.attributeValueRepository = attributeValueRepository;
+        this.changeLogRepository = changeLogRepository;
+        this.mergeRequestRepository = mergeRequestRepository;
+        this.unomiSyncLogRepository = unomiSyncLogRepository;
+        this.scoreService = scoreService;
+        this.unomiService = unomiService;
+        this.objectMapper = objectMapper;
+        this.entityTemplate = entityTemplate;
+    }
 
     // =====================================================================
-    // CREATE CANDIDATE
+    // CREATE CANDIDATE (manual, admin — POST /profile-match-candidates)
     // =====================================================================
 
     @Override
-    public ProfileMatchCandidateResponse createCandidate(Long leftId, Long rightId) {
+    @Transactional
+    public Mono<ProfileMatchCandidateResponse> createCandidate(Long leftId, Long rightId) {
         if (Objects.equals(leftId, rightId)) {
-            throw new BusinessException("INVALID_INPUT", "Left and right profiles must be different");
+            return Mono.error(new BusinessException("INVALID_INPUT", "Left and right profiles must be different"));
         }
-        MasterProfile left  = loadActiveProfile(leftId);
-        MasterProfile right = loadActiveProfile(rightId);
 
-        ProfileMatchScoreResult scoreResult = resolveMatch(left, right);
+        return Mono.zip(loadActiveProfile(leftId), loadActiveProfile(rightId))
+                .flatMap(t -> resolveMatch(t.getT1(), t.getT2())
+                        .flatMap(scoreResult -> createCandidateWithScore(t.getT1(), t.getT2(), scoreResult)));
+    }
+
+    private Mono<ProfileMatchCandidateResponse> createCandidateWithScore(MasterProfile left, MasterProfile right,
+                                                                        ProfileMatchScoreResult scoreResult) {
+        Long leftId = left.getId();
+        Long rightId = right.getId();
         BigDecimal newScore = scoreResult.getScore();
 
         if (newScore.compareTo(MIN_CANDIDATE_SCORE) < 0) {
-            throw new BusinessException("SCORE_TOO_LOW", "Match score is too low to create a candidate");
+            return Mono.error(new BusinessException("SCORE_TOO_LOW",
+                    "Match score is too low to create a candidate"));
         }
 
-        Optional<ProfileMatchCandidate> existingOpt = findExistingCandidate(leftId, rightId);
-        if (existingOpt.isPresent()) {
-            ProfileMatchCandidate existing = existingOpt.get();
-            short existingStatus = existing.getStatus();
+        return findExistingCandidate(leftId, rightId)
+                .flatMap(existing -> {
+                    short existingStatus = existing.getStatus();
 
-            if (existingStatus == STATUS_PENDING || existingStatus == STATUS_MERGED) {
-                List<ProfileMatchReason> reasons = reasonRepository.findByMatchCandidateId(existing.getId());
-                return toResponse(existing, left, right, reasons);
-            }
+                    if (existingStatus == STATUS_PENDING || existingStatus == STATUS_MERGED) {
+                        return reasonRepository.findByMatchCandidateId(existing.getId())
+                                .collectList()
+                                .map(reasons -> toResponse(existing, left, right, reasons));
+                    }
 
-            if (existingStatus == STATUS_IGNORED || existingStatus == STATUS_REJECTED) {
-                BigDecimal diff = newScore.subtract(existing.getMatchScore());
-                if (diff.compareTo(MIN_SCORE_IMPROVEMENT) < 0) {
-                    throw new BusinessException("SCORE_NOT_IMPROVED",
-                            "New score must be at least 10 points higher than previous ignored/rejected candidate to recreate");
-                }
-                existing.setStatus(STATUS_EXPIRED);
-                candidateRepository.save(existing);
-            }
-        }
+                    if (existingStatus == STATUS_IGNORED || existingStatus == STATUS_REJECTED) {
+                        BigDecimal diff = newScore.subtract(existing.getMatchScore());
+                        if (diff.compareTo(MIN_SCORE_IMPROVEMENT) < 0) {
+                            return Mono.error(new BusinessException("SCORE_NOT_IMPROVED",
+                                    "New score must be at least " + MIN_SCORE_IMPROVEMENT
+                                            + " points higher than previous ignored/rejected candidate to recreate"));
+                        }
+                        existing.setStatus(STATUS_EXPIRED);
+                        return candidateRepository.save(existing)
+                                .then(createAndRespond(left, right, scoreResult));
+                    }
 
-        ProfileMatchCandidate saved = persistCandidateWithReasons(left, right, scoreResult);
-        List<ProfileMatchReason> reasons = reasonRepository.findByMatchCandidateId(saved.getId());
-        return toResponse(saved, left, right, reasons);
+                    return createAndRespond(left, right, scoreResult);
+                })
+                .switchIfEmpty(Mono.defer(() -> createAndRespond(left, right, scoreResult)));
+    }
+
+    private Mono<ProfileMatchCandidateResponse> createAndRespond(MasterProfile left, MasterProfile right,
+                                                                  ProfileMatchScoreResult scoreResult) {
+        return persistCandidateWithReasons(left, right, scoreResult)
+                .flatMap(saved -> reasonRepository.findByMatchCandidateId(saved.getId())
+                        .collectList()
+                        .map(reasons -> toResponse(saved, left, right, reasons)));
     }
 
     // =====================================================================
@@ -152,13 +219,20 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     // =====================================================================
 
     @Override
-    @Transactional(readOnly = true)
-    public ProfileMatchCandidateResponse getById(Long id) {
-        ProfileMatchCandidate candidate = loadCandidate(id);
-        MasterProfile left  = masterProfileRepository.findById(candidate.getLeftMasterProfileId()).orElse(null);
-        MasterProfile right = masterProfileRepository.findById(candidate.getRightMasterProfileId()).orElse(null);
-        List<ProfileMatchReason> reasons = reasonRepository.findByMatchCandidateId(id);
-        return toResponse(candidate, left, right, reasons);
+    public Mono<ProfileMatchCandidateResponse> getById(Long id) {
+        return toResponseWithLookup(loadCandidate(id));
+    }
+
+    private Mono<ProfileMatchCandidateResponse> toResponseWithLookup(Mono<ProfileMatchCandidate> candidateMono) {
+        return candidateMono.flatMap(this::toResponseWithLookup);
+    }
+
+    private Mono<ProfileMatchCandidateResponse> toResponseWithLookup(ProfileMatchCandidate candidate) {
+        return Mono.zip(
+                optional(masterProfileRepository.findById(candidate.getLeftMasterProfileId())),
+                optional(masterProfileRepository.findById(candidate.getRightMasterProfileId())),
+                reasonRepository.findByMatchCandidateId(candidate.getId()).collectList()
+        ).map(t -> toResponse(candidate, t.getT1().orElse(null), t.getT2().orElse(null), t.getT3()));
     }
 
     // =====================================================================
@@ -166,167 +240,74 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     // =====================================================================
 
     @Override
-    @Transactional(readOnly = true)
-    public List<ProfileMatchCandidateResponse> search(ProfileMatchCandidateSearchRequest req) {
-        Specification<ProfileMatchCandidate> spec = (root, query, cb) -> {
-            List<Predicate> predicates = new ArrayList<>();
-            if (req.getStatus() != null) {
-                predicates.add(cb.equal(root.get("status"), req.getStatus()));
-            }
-            if (StringUtils.hasText(req.getMatchLevel())) {
-                predicates.add(cb.equal(root.get("matchLevel"), req.getMatchLevel()));
-            }
-            if (req.getMinScore() != null) {
-                predicates.add(cb.greaterThanOrEqualTo(root.get("matchScore"), req.getMinScore()));
-            }
-            if (StringUtils.hasText(req.getSourceSystem())) {
-                predicates.add(cb.or(
-                        cb.equal(root.get("leftSourceSystem"), req.getSourceSystem()),
-                        cb.equal(root.get("rightSourceSystem"), req.getSourceSystem())
-                ));
-            }
-            if (req.getFromDate() != null) {
-                predicates.add(cb.greaterThanOrEqualTo(root.get("created"), req.getFromDate()));
-            }
-            if (req.getToDate() != null) {
-                predicates.add(cb.lessThanOrEqualTo(root.get("created"), req.getToDate()));
-            }
-            if (StringUtils.hasText(req.getKeyword())) {
-                // ProfileMatchCandidate chỉ giữ id thô (không có association sang MasterProfile)
-                // nên không join được — dùng EXISTS subquery khớp keyword vào một trong hai vế.
-                String kw = "%" + req.getKeyword().trim().toLowerCase() + "%";
-                Subquery<Long> sub = query.subquery(Long.class);
-                Root<MasterProfile> mp = sub.from(MasterProfile.class);
-                sub.select(mp.get("id")).where(cb.and(
-                        cb.or(
-                                cb.equal(mp.get("id"), root.get("leftMasterProfileId")),
-                                cb.equal(mp.get("id"), root.get("rightMasterProfileId"))
-                        ),
-                        cb.or(
-                                cb.like(cb.lower(mp.get("fullName")),    kw),
-                                cb.like(cb.lower(mp.get("profileCode")), kw),
-                                cb.like(cb.lower(mp.get("phone")),       kw),
-                                cb.like(cb.lower(mp.get("taxCode")),     kw)
-                        )
-                ));
-                predicates.add(cb.exists(sub));
-            }
-            query.orderBy(cb.desc(root.get("matchScore")), cb.desc(root.get("created")));
-            return cb.and(predicates.toArray(new Predicate[0]));
-        };
-        return candidateRepository.findAll(spec).stream()
-                .map(this::toResponseWithLookup)
-                .collect(Collectors.toList());
+    public Mono<List<ProfileMatchCandidateResponse>> search(ProfileMatchCandidateSearchRequest req) {
+        // NOTE: giữ nguyên hành vi bản gốc — req.getKeyword() KHÔNG được áp dụng làm điều kiện lọc
+        // (đây là thiếu sót có sẵn ở bản JPA gốc: field tồn tại trong DTO/javadoc nhưng chưa từng
+        // được dùng trong Specification). Không tự ý bổ sung logic lọc theo keyword.
+        String sql = "SELECT * FROM profile_match_candidates " + SEARCH_WHERE_SQL
+                + "ORDER BY match_score DESC, created DESC";
+
+        return bindSearchParams(entityTemplate.getDatabaseClient().sql(sql), req)
+                .map((row, metadata) -> entityTemplate.getConverter().read(ProfileMatchCandidate.class, row, metadata))
+                .all()
+                .collectList()
+                .flatMap(this::toResponseListWithLookup);
     }
 
-    // =====================================================================
-    // GROUPED PENDING — màn "Đối soát định danh"
-    // =====================================================================
+    private DatabaseClient.GenericExecuteSpec bindSearchParams(DatabaseClient.GenericExecuteSpec spec,
+                                                                ProfileMatchCandidateSearchRequest req) {
+        boolean statusActive = req.getStatus() != null;
+        boolean matchLevelActive = StringUtils.hasText(req.getMatchLevel());
+        boolean minScoreActive = req.getMinScore() != null;
+        boolean sourceSystemActive = StringUtils.hasText(req.getSourceSystem());
+        boolean fromActive = req.getFromDate() != null;
+        boolean toActive = req.getToDate() != null;
 
-    @Override
-    @Transactional(readOnly = true)
-    public Page<ProfileMatchGroupResponse> searchPendingGroups(ProfileMatchGroupSearchRequest req,
-                                                               Pageable pageable) {
-        String keyword = StringUtils.hasText(req.getKeyword())
-                ? "%" + req.getKeyword().trim() + "%"
-                : null;
-
-        long total = candidateRepository.countPendingGroups(keyword);
-        if (total == 0) {
-            log.info("ProfileMatchCandidateServiceImpl - searchPendingGroups: keyword={}, no pending group", keyword);
-            return new PageImpl<>(List.of(), pageable, 0);
-        }
-
-        List<Object[]> rows = candidateRepository.findPendingGroups(
-                keyword, pageable.getPageSize(), pageable.getOffset());
-
-        List<ProfileMatchGroupResponse> content = rows.stream()
-                .map(this::toGroupResponse)
-                .collect(Collectors.toList());
-
-        // Khoá khớp chỉ nạp cho các hồ sơ của TRANG hiện tại — một query phụ, không phụ thuộc
-        // tổng số candidate trong DB.
-        attachMatchedKeys(content);
-
-        log.info("ProfileMatchCandidateServiceImpl - searchPendingGroups: keyword={}, page={}, size={}, "
-                        + "returned={}, totalGroups={}",
-                keyword, pageable.getPageNumber(), pageable.getPageSize(), content.size(), total);
-
-        return new PageImpl<>(content, pageable, total);
+        return spec
+                .bind("statusActive", statusActive)
+                .bind("status", statusActive ? req.getStatus() : (short) -1)
+                .bind("matchLevelActive", matchLevelActive)
+                .bind("matchLevel", matchLevelActive ? req.getMatchLevel() : "")
+                .bind("minScoreActive", minScoreActive)
+                .bind("minScore", minScoreActive ? req.getMinScore() : BigDecimal.ZERO)
+                .bind("sourceSystemActive", sourceSystemActive)
+                .bind("sourceSystem", sourceSystemActive ? req.getSourceSystem() : "")
+                .bind("fromActive", fromActive)
+                .bind("fromDate", fromActive ? req.getFromDate() : LocalDateTime.MIN)
+                .bind("toActive", toActive)
+                .bind("toDate", toActive ? req.getToDate() : LocalDateTime.MAX);
     }
 
-    /**
-     * Map một dòng aggregate: {@code [id, profile_code, full_name, customer_type, phone, tax_code,
-     * identity_no, pending_count, max_score, min_score]}.
-     */
-    private ProfileMatchGroupResponse toGroupResponse(Object[] row) {
-        String customerType = asString(row[3]);
-        BigDecimal maxScore = asBigDecimal(row[8]);
-        BigDecimal minScore = asBigDecimal(row[9]);
-
-        return ProfileMatchGroupResponse.builder()
-                .masterProfileId(asLong(row[0]))
-                .profileCode(asString(row[1]))
-                .fullName(asString(row[2]))
-                .customerType(customerType)
-                .customerTypeText(CustomerType.textOf(customerType))
-                .phone(asString(row[4]))
-                .taxCode(asString(row[5]))
-                .identityNo(asString(row[6]))
-                .pendingCount(asLong(row[7]))
-                .maxScore(maxScore)
-                .maxScorePercent(formatPercent(maxScore))
-                .maxMatchLevel(resolveMatchLevel(maxScore))
-                .maxMatchLevelText(matchLevelText(resolveMatchLevel(maxScore)))
-                .matchedKeys(new ArrayList<>())
-                .matchedKeysText(new ArrayList<>())
-                .hasLowConfidence(minScore != null
-                        && minScore.compareTo(LOW_CONFIDENCE_THRESHOLD) < 0)
-                .build();
-    }
-
-    private void attachMatchedKeys(List<ProfileMatchGroupResponse> groups) {
-        if (groups.isEmpty()) {
-            return;
-        }
-        List<Long> profileIds = groups.stream()
-                .map(ProfileMatchGroupResponse::getMasterProfileId)
-                .collect(Collectors.toList());
-
-        Map<Long, List<String>> byProfile = new HashMap<>();
-        for (Object[] row : candidateRepository.findMatchedReasonTypes(profileIds)) {
-            byProfile.computeIfAbsent(asLong(row[0]), k -> new ArrayList<>()).add(asString(row[1]));
-        }
-
-        for (ProfileMatchGroupResponse g : groups) {
-            List<String> keys = byProfile.getOrDefault(g.getMasterProfileId(), List.of());
-            g.setMatchedKeys(new ArrayList<>(keys));
-            g.setMatchedKeysText(keys.stream()
-                    .map(this::reasonTypeText)
-                    .distinct()
-                    .collect(Collectors.toList()));
-        }
+    private Mono<List<ProfileMatchCandidateResponse>> toResponseListWithLookup(List<ProfileMatchCandidate> candidates) {
+        return Flux.fromIterable(candidates)
+                .concatMap(this::toResponseWithLookup)
+                .collectList();
     }
 
     // =====================================================================
     // LIST
     // =====================================================================
 
-
-
     @Override
-    @Transactional(readOnly = true)
-    public List<ProfileMatchCandidateResponse> listByStatus(Short status) {
-        return candidateRepository.findByStatus(status)
-                .stream().map(this::toResponseWithLookup).collect(Collectors.toList());
+    public Mono<List<ProfileMatchCandidateResponse>> listPending() {
+        return candidateRepository.findByStatusOrderByMatchScoreDescCreatedDesc(STATUS_PENDING)
+                .collectList()
+                .flatMap(this::toResponseListWithLookup);
     }
 
     @Override
-    @Transactional(readOnly = true)
-    public List<ProfileMatchCandidateResponse> listByProfile(Long masterProfileId) {
+    public Mono<List<ProfileMatchCandidateResponse>> listByStatus(Short status) {
+        return candidateRepository.findByStatus(status)
+                .collectList()
+                .flatMap(this::toResponseListWithLookup);
+    }
+
+    @Override
+    public Mono<List<ProfileMatchCandidateResponse>> listByProfile(Long masterProfileId) {
         return candidateRepository
                 .findByLeftMasterProfileIdOrRightMasterProfileId(masterProfileId, masterProfileId)
-                .stream().map(this::toResponseWithLookup).collect(Collectors.toList());
+                .collectList()
+                .flatMap(this::toResponseListWithLookup);
     }
 
     // =====================================================================
@@ -334,140 +315,253 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     // =====================================================================
 
     @Override
-    public ProfileMatchCandidateResponse ignore(Long id) {
-        ProfileMatchCandidate candidate = loadCandidate(id);
-        validatePending(candidate);
-        candidate.setStatus(STATUS_IGNORED);
-        candidate.setDecisionBy(SecurityUtils.getCurrentUsername().orElse("system"));
-        candidate.setDecisionAt(LocalDateTime.now());
-        candidateRepository.save(candidate);
-        log.info("ProfileMatchCandidateServiceImpl - IGNORED candidate id={}", id);
-        return getById(id);
+    @Transactional
+    public Mono<ProfileMatchCandidateResponse> ignore(Long id) {
+        return loadCandidate(id)
+                .flatMap(this::validatePending)
+                .flatMap(candidate -> SecurityUtils.getCurrentUsernameOrSystem().flatMap(actor -> {
+                    candidate.setStatus(STATUS_IGNORED);
+                    candidate.setDecisionBy(actor);
+                    candidate.setDecisionAt(LocalDateTime.now());
+                    return candidateRepository.save(candidate);
+                }))
+                .doOnNext(saved -> log.info("ProfileMatchCandidateServiceImpl - IGNORED candidate id={}", id))
+                .then(getById(id));
     }
 
     @Override
-    public ProfileMatchCandidateResponse reject(Long id) {
-        ProfileMatchCandidate candidate = loadCandidate(id);
-        validatePending(candidate);
-        candidate.setStatus(STATUS_REJECTED);
-        candidate.setDecisionBy(SecurityUtils.getCurrentUsername().orElse("system"));
-        candidate.setDecisionAt(LocalDateTime.now());
-        candidateRepository.save(candidate);
-        log.info("ProfileMatchCandidateServiceImpl - REJECTED candidate id={}", id);
-        return getById(id);
+    @Transactional
+    public Mono<ProfileMatchCandidateResponse> reject(Long id) {
+        return loadCandidate(id)
+                .flatMap(this::validatePending)
+                .flatMap(candidate -> SecurityUtils.getCurrentUsernameOrSystem().flatMap(actor -> {
+                    candidate.setStatus(STATUS_REJECTED);
+                    candidate.setDecisionBy(actor);
+                    candidate.setDecisionAt(LocalDateTime.now());
+                    return candidateRepository.save(candidate);
+                }))
+                .doOnNext(saved -> log.info("ProfileMatchCandidateServiceImpl - REJECTED candidate id={}", id))
+                .then(getById(id));
     }
 
     // =====================================================================
     // MERGE
     // =====================================================================
 
+    /**
+     * Reactive port giữ nguyên đúng chuỗi ghi của bản gốc (JPA, class-level {@code @Transactional}):
+     * tạo ProfileMergeRequest → update target (fill blanks) → copy identity links → copy attribute
+     * values → update source (MERGED) → ghi change log → update candidate (MERGED) → sync Unomi.
+     * {@code @Transactional} ở method này bọc TOÀN BỘ chuỗi (kể cả bước sync Unomi) trong CÙNG một
+     * transaction — đúng như bản gốc (bản gốc gọi {@code syncToUnomi(...).block()} ngay trong cùng
+     * method transactional, không tách async như luồng ingestion). Xem cảnh báo rủi ro ở báo cáo
+     * cuối: giữ 1 network call (Unomi) bên trong transaction DB là rủi ro có sẵn từ bản gốc, không
+     * phải lỗi tôi thêm vào — không tự ý tách ra vì bạn yêu cầu giữ nguyên business logic.
+     */
     @Override
-    public ProfileMatchCandidateResponse merge(Long id, ProfileCandidateMergeRequest request) {
-        ProfileMatchCandidate candidate = loadCandidate(id);
-        validatePending(candidate);
+    @Transactional
+    public Mono<ProfileMatchCandidateResponse> merge(Long id, ProfileCandidateMergeRequest request) {
+        return loadCandidate(id)
+                .flatMap(this::validatePending)
+                .flatMap(candidate -> Mono.zip(loadProfile(candidate.getLeftMasterProfileId()),
+                                loadProfile(candidate.getRightMasterProfileId()))
+                        .flatMap(t -> {
+                            MasterProfile left = t.getT1();
+                            MasterProfile right = t.getT2();
 
-        // Bắt buộc cả hai vế còn ACTIVE: một merge khác (chạy trước) có thể đã biến 1 trong 2
-        // hồ sơ thành MERGED/DELETED. Nếu vẫn cho merge tiếp sẽ tạo chuỗi merge chồng chéo và
-        // ghi đè mergedIntoProfileId sai.
-        MasterProfile left  = loadActiveProfile(candidate.getLeftMasterProfileId());
-        MasterProfile right = loadActiveProfile(candidate.getRightMasterProfileId());
+                            MasterProfile target;
+                            MasterProfile source;
+                            if (request.getTargetMasterProfileId() != null) {
+                                if (!request.getTargetMasterProfileId().equals(left.getId())
+                                        && !request.getTargetMasterProfileId().equals(right.getId())) {
+                                    return Mono.<ProfileMatchCandidateResponse>error(new BusinessException("INVALID_TARGET",
+                                            "targetMasterProfileId must be either leftMasterProfileId or rightMasterProfileId"));
+                                }
+                                target = request.getTargetMasterProfileId().equals(left.getId()) ? left : right;
+                                source = (target == left) ? right : left;
+                            } else {
+                                target = chooseTarget(left, right, candidate);
+                                source = (target == left) ? right : left;
+                            }
 
-        // Determine target and source
-        MasterProfile target;
-        MasterProfile source;
-        if (request.getTargetMasterProfileId() != null) {
-            if (!request.getTargetMasterProfileId().equals(left.getId())
-                    && !request.getTargetMasterProfileId().equals(right.getId())) {
-                throw new BusinessException("INVALID_TARGET",
-                        "targetMasterProfileId must be either leftMasterProfileId or rightMasterProfileId");
-            }
-            target = request.getTargetMasterProfileId().equals(left.getId()) ? left : right;
-            source = (target == left) ? right : left;
-        } else {
-            target = chooseTarget(left, right, candidate);
-            source = (target == left) ? right : left;
-        }
+                            return doMerge(id, candidate, target, source, request);
+                        }));
+    }
 
-        String actor = SecurityUtils.getCurrentUsername().orElse("system");
-        LocalDateTime now = LocalDateTime.now();
+    private Mono<ProfileMatchCandidateResponse> doMerge(Long candidateId, ProfileMatchCandidate candidate,
+                                                         MasterProfile target, MasterProfile source,
+                                                         ProfileCandidateMergeRequest request) {
+        return SecurityUtils.getCurrentUsernameOrSystem().flatMap(actor -> {
+            LocalDateTime now = LocalDateTime.now();
 
-        // 5. Create merge request
-        ProfileMergeRequest mergeReq = new ProfileMergeRequest();
-        mergeReq.setSourceMasterProfileId(source.getId());
-        mergeReq.setTargetMasterProfileId(target.getId());
-        mergeReq.setMergeReason(request.getMergeReason());
-        mergeReq.setStatus((short) 3); // COMPLETED
-        mergeReq.setRequestedBy(actor);
-        mergeReq.setApprovedBy(actor);
-        mergeReq.setRequestedAt(now);
-        mergeReq.setApprovedAt(now);
-        mergeReq.setCompletedAt(now);
-        mergeReq = mergeRequestRepository.save(mergeReq);
-        log.info("ProfileMatchCandidateServiceImpl - mergeRequest id={} created", mergeReq.getId());
+            // 5. Create merge request
+            ProfileMergeRequest mergeReq = new ProfileMergeRequest();
+            mergeReq.setSourceMasterProfileId(source.getId());
+            mergeReq.setTargetMasterProfileId(target.getId());
+            mergeReq.setMergeReason(request.getMergeReason());
+            mergeReq.setStatus((short) 3); // COMPLETED
+            mergeReq.setRequestedBy(actor);
+            mergeReq.setApprovedBy(actor);
+            mergeReq.setRequestedAt(now);
+            mergeReq.setApprovedAt(now);
+            mergeReq.setCompletedAt(now);
 
-        // 6. Merge data (fill blanks only)
-        mergeProfileData(target, source);
-        target.setLastMergedAt(now);
-        masterProfileRepository.save(target);
+            return mergeRequestRepository.save(mergeReq)
+                    .flatMap(savedMergeReq -> {
+                        // 6. Merge data (fill blanks only)
+                        mergeProfileData(target, source);
+                        target.setLastMergedAt(now);
 
-        // 8. Copy identity links
-        copyIdentityLinks(source.getId(), target.getId(), actor, now);
+                        return masterProfileRepository.save(target)
+                                // 8. Copy identity links
+                                .then(copyIdentityLinks(source.getId(), target.getId(), actor, now))
+                                // 9. Copy attribute values
+                                .then(copyAttributeValues(source.getId(), target.getId()))
+                                // 10. Update source profile
+                                .then(Mono.defer(() -> {
+                                    source.setStatus(PROFILE_MERGED);
+                                    source.setMergedIntoProfileId(target.getId());
+                                    return masterProfileRepository.save(source);
+                                }))
+                                // 11. Write change log
+                                .then(Mono.defer(() -> {
+                                    boolean leftIsSource = candidate.getLeftMasterProfileId().equals(source.getId());
+                                    boolean leftIsTarget = candidate.getLeftMasterProfileId().equals(target.getId());
 
-        // 9. Copy attribute values
-        copyAttributeValues(source.getId(), target.getId());
+                                    ProfileChangeLog cl = new ProfileChangeLog();
+                                    cl.setMasterProfileId(target.getId());
+                                    cl.setSourceSystem(leftIsSource ? candidate.getLeftSourceSystem() : candidate.getRightSourceSystem());
+                                    cl.setEventType("ADMIN_MERGE");
+                                    cl.setPropertyName("PROFILE_MERGE");
+                                    cl.setOldValue(source.getProfileCode());
+                                    cl.setNewValue(target.getProfileCode());
+                                    cl.setSelectedValue(target.getProfileCode());
+                                    cl.setOldSource(leftIsSource ? candidate.getLeftSourceSystem() : candidate.getRightSourceSystem());
+                                    cl.setNewSource(leftIsTarget ? candidate.getLeftSourceSystem() : candidate.getRightSourceSystem());
+                                    cl.setMergeStrategy("ADMIN_DECISION");
+                                    cl.setReason(request.getMergeReason());
+                                    cl.setChangedBy(actor);
+                                    cl.setChangedAt(now);
+                                    return changeLogRepository.save(cl);
+                                }))
+                                // 12. Update candidate
+                                .then(Mono.defer(() -> {
+                                    candidate.setStatus(STATUS_MERGED);
+                                    candidate.setDecisionBy(actor);
+                                    candidate.setDecisionAt(now);
+                                    candidate.setMergeRequestId(savedMergeReq.getId());
+                                    return candidateRepository.save(candidate);
+                                }))
+                                // 13. Sync target to Unomi (INLINE, cùng transaction — giống bản gốc)
+                                .then(syncToUnomi(target, "MERGE"))
+                                .then(getById(candidateId))
+                                .doOnNext(r -> log.info("ProfileMatchCandidateServiceImpl - MERGED candidate id={}, " +
+                                                "source={}, target={}", candidateId, source.getId(), target.getId()));
+                    });
+        });
+    }
 
-        // 9b. Re-point dữ liệu tham chiếu source sang target. Các tab tra cứu đều query thẳng
-        // theo masterProfileId (không đi theo mergedIntoProfileId), nên nếu bỏ bước này thì
-        // event / source record / conflict của source tồn tại trong DB nhưng không còn hiển thị
-        // ở bất kỳ hồ sơ nào sau merge.
-        reassignReferencedData(source.getId(), target.getId());
+    private Mono<Void> copyIdentityLinks(Long sourceId, Long targetId, String actor, LocalDateTime now) {
+        return Mono.zip(
+                identityLinkRepository.findByMasterProfileId(sourceId).collectList(),
+                identityLinkRepository.findByMasterProfileId(targetId).collectList()
+        ).flatMap(t -> {
+            List<ProfileIdentityLink> sourceLinks = t.getT1();
+            List<ProfileIdentityLink> targetLinks = t.getT2();
 
-        // 10. Update source profile
-        source.setStatus((short) PROFILE_MERGED);
-        source.setMergedIntoProfileId(target.getId());
-        masterProfileRepository.save(source);
+            return Flux.fromIterable(sourceLinks)
+                    .concatMap(sl -> {
+                        boolean exists = targetLinks.stream().anyMatch(tl ->
+                                Objects.equals(tl.getSourceSystem(), sl.getSourceSystem())
+                                        && Objects.equals(tl.getSourceCustomerId(), sl.getSourceCustomerId()));
 
-        // 11. Write change log
-        ProfileChangeLog cl = new ProfileChangeLog();
-        cl.setMasterProfileId(target.getId());
-        cl.setSourceSystem(candidate.getLeftMasterProfileId().equals(source.getId())
-                ? candidate.getLeftSourceSystem() : candidate.getRightSourceSystem());
-        cl.setEventType("ADMIN_MERGE");
-        cl.setPropertyName("PROFILE_MERGE");
-        cl.setOldValue(source.getProfileCode());
-        cl.setNewValue(target.getProfileCode());
-        cl.setSelectedValue(target.getProfileCode());
-        cl.setOldSource(candidate.getLeftMasterProfileId().equals(source.getId())
-                ? candidate.getLeftSourceSystem() : candidate.getRightSourceSystem());
-        cl.setNewSource(candidate.getLeftMasterProfileId().equals(target.getId())
-                ? candidate.getLeftSourceSystem() : candidate.getRightSourceSystem());
-        cl.setMergeStrategy("ADMIN_DECISION");
-        cl.setReason(request.getMergeReason());
-        cl.setChangedBy(actor);
-        cl.setChangedAt(now);
-        changeLogRepository.save(cl);
+                        Mono<Void> createIfAbsent = exists ? Mono.empty() : Mono.defer(() -> {
+                            ProfileIdentityLink newLink = new ProfileIdentityLink();
+                            newLink.setMasterProfileId(targetId);
+                            newLink.setSourceSystem(sl.getSourceSystem());
+                            newLink.setSourceCustomerId(sl.getSourceCustomerId());
+                            newLink.setIdentityType(sl.getIdentityType());
+                            newLink.setIdentityValue(sl.getIdentityValue());
+                            newLink.setConfidenceScore(sl.getConfidenceScore());
+                            newLink.setIsPrimary(false);
+                            newLink.setStatus((short) 1);
+                            newLink.setLinkedBy(actor);
+                            newLink.setLinkedAt(now);
+                            return identityLinkRepository.save(newLink).then();
+                        });
 
-        // 12. Update candidate
-        candidate.setStatus(STATUS_MERGED);
-        candidate.setDecisionBy(actor);
-        candidate.setDecisionAt(now);
-        candidate.setMergeRequestId(mergeReq.getId());
-        candidateRepository.save(candidate);
+                        sl.setStatus((short) 3); // MERGED
+                        return createIfAbsent.then(identityLinkRepository.save(sl));
+                    })
+                    .then();
+        });
+    }
 
-        // 12b. Vô hiệu hoá các candidate PENDING khác còn trỏ tới source (profile vừa "chết").
-        expireStaleCandidatesForMergedProfile(source.getId(), id, actor, now);
+    private Mono<Void> copyAttributeValues(Long sourceId, Long targetId) {
+        return Mono.zip(
+                attributeValueRepository.findByMasterProfileId(sourceId).collectList(),
+                attributeValueRepository.findByMasterProfileId(targetId).collectList()
+        ).flatMap(t -> {
+            List<ProfileAttributeValue> sourceValues = t.getT1();
+            List<ProfileAttributeValue> targetValues = t.getT2();
 
-        // 13. Sync target to Unomi
-        syncToUnomi(target, "MERGE");
+            return Flux.fromIterable(sourceValues)
+                    .concatMap(sv -> {
+                        boolean exists = targetValues.stream().anyMatch(tv ->
+                                Objects.equals(tv.getSourceSystem(), sv.getSourceSystem())
+                                        && Objects.equals(tv.getPropertyName(), sv.getPropertyName())
+                                        && Objects.equals(tv.getPropertyValue(), sv.getPropertyValue()));
+                        if (exists) {
+                            return Mono.<Void>empty();
+                        }
+                        boolean noSelectedInTarget = targetValues.stream().noneMatch(tv ->
+                                Objects.equals(tv.getPropertyName(), sv.getPropertyName())
+                                        && Boolean.TRUE.equals(tv.getIsSelected()));
+                        ProfileAttributeValue nv = new ProfileAttributeValue();
+                        nv.setMasterProfileId(targetId);
+                        nv.setSourceRecordId(sv.getSourceRecordId());
+                        nv.setSourceSystem(sv.getSourceSystem());
+                        nv.setPropertyName(sv.getPropertyName());
+                        nv.setPropertyValue(sv.getPropertyValue());
+                        nv.setNormalizedValue(sv.getNormalizedValue());
+                        nv.setConfidenceScore(sv.getConfidenceScore());
+                        nv.setIsSelected(noSelectedInTarget);
+                        nv.setReceivedAt(sv.getReceivedAt());
+                        return attributeValueRepository.save(nv).then();
+                    })
+                    .then();
+        });
+    }
 
-        // 13b. Đẩy cả source lên Unomi để bên đó biết hồ sơ này đã MERGED (status + mergedIntoProfileId).
-        // Unomi không có API delete trong UnomiClient, nên đây là cách tránh đếm trùng khách hàng
-        // ở segment/campaign mà không cần đổi contract phía Unomi.
-        syncToUnomi(source, "MERGE_SOURCE");
+    @SuppressWarnings("unchecked")
+    private Mono<Void> syncToUnomi(MasterProfile profile, String syncType) {
+        return SecurityUtils.getCurrentUsernameOrSystem().flatMap(actor -> {
+            ProfileUnomiSyncLog syncLog = new ProfileUnomiSyncLog();
+            syncLog.setMasterProfileId(profile.getId());
+            syncLog.setProfileCode(profile.getProfileCode());
+            syncLog.setSyncType(syncType);
+            syncLog.setCreatedBy(actor);
 
-        log.info("ProfileMatchCandidateServiceImpl - MERGED candidate id={}, source={}, target={}",
-                id, source.getId(), target.getId());
-        return getById(id);
+            return unomiService.syncProfileToUnomi(profile)
+                    .flatMap(result -> {
+                        syncLog.setStatus((short) 1);
+                        syncLog.setResponsePayload(result != null
+                                ? objectMapper.convertValue(result, Map.class) : null);
+                        syncLog.setSyncedAt(LocalDateTime.now());
+                        profile.setSyncedToUnomiAt(LocalDateTime.now());
+                        return masterProfileRepository.save(profile);
+                    })
+                    .onErrorResume(ex -> {
+                        syncLog.setStatus((short) 2);
+                        syncLog.setErrorMessage(ex.getMessage());
+                        syncLog.setSyncedAt(LocalDateTime.now());
+                        log.error("ProfileMatchCandidateServiceImpl - Unomi sync FAILED: profileCode={}",
+                                profile.getProfileCode(), ex);
+                        return Mono.empty();
+                    })
+                    .then(Mono.defer(() -> unomiSyncLogRepository.save(syncLog)))
+                    .then();
+        });
     }
 
     // =====================================================================
@@ -475,82 +569,85 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     // =====================================================================
 
     @Override
-    public ProfileMatchCandidate createCandidateBetweenProfiles(Long existingProfileId,
-                                                                 Long newProfileId,
-                                                                 NormalizedProfileData incomingData,
-                                                                 ProfileSourceRecord sourceRecord) {
+    public Mono<ProfileMatchCandidate> createCandidateBetweenProfiles(Long existingProfileId,
+                                                                       Long newProfileId,
+                                                                       NormalizedProfileData incomingData,
+                                                                       ProfileSourceRecord sourceRecord) {
         log.info("ProfileMatchCandidateServiceImpl - createCandidateBetweenProfiles: existing={}, new={}",
                 existingProfileId, newProfileId);
 
         if (Objects.equals(existingProfileId, newProfileId)) {
-            throw new BusinessException("INVALID_INPUT", "existingProfileId and newProfileId must be different");
+            return Mono.error(new BusinessException("INVALID_INPUT",
+                    "existingProfileId and newProfileId must be different"));
         }
 
-        MasterProfile existing = masterProfileRepository.findById(existingProfileId)
-                .orElseThrow(() -> new BusinessException("NOT_FOUND",
-                        "Existing master profile not found: " + existingProfileId));
-        MasterProfile newProfile = masterProfileRepository.findById(newProfileId)
-                .orElseThrow(() -> new BusinessException("NOT_FOUND",
-                        "New master profile not found: " + newProfileId));
+        Mono<MasterProfile> existingMono = masterProfileRepository.findById(existingProfileId)
+                .switchIfEmpty(Mono.error(new BusinessException("NOT_FOUND",
+                        "Existing master profile not found: " + existingProfileId)));
+        Mono<MasterProfile> newProfileMono = masterProfileRepository.findById(newProfileId)
+                .switchIfEmpty(Mono.error(new BusinessException("NOT_FOUND",
+                        "New master profile not found: " + newProfileId)));
 
-        if (existing.getStatus() == PROFILE_MERGED || existing.getStatus() == PROFILE_DELETED) {
-            throw new BusinessException("INVALID_PROFILE",
-                    "Existing profile " + existingProfileId + " is MERGED or DELETED");
-        }
-        if (newProfile.getStatus() == PROFILE_MERGED || newProfile.getStatus() == PROFILE_DELETED) {
-            throw new BusinessException("INVALID_PROFILE",
-                    "New profile " + newProfileId + " is MERGED or DELETED");
-        }
+        return Mono.zip(existingMono, newProfileMono).flatMap(t -> {
+            MasterProfile existing = t.getT1();
+            MasterProfile newProfile = t.getT2();
 
-        // Return existing PENDING/MERGED candidate if one already exists between the pair
-        if (candidateRepository.existsPendingOrMergedBetween(existingProfileId, newProfileId)) {
-            List<ProfileMatchCandidate> existing2 = candidateRepository.findBetween(existingProfileId, newProfileId);
-            if (!existing2.isEmpty()) {
-                log.info("ProfileMatchCandidateServiceImpl - candidate already exists between ({},{}), returning existing",
-                        existingProfileId, newProfileId);
-                return existing2.get(0);
+            if (isMergedOrDeleted(existing.getStatus())) {
+                return Mono.error(new BusinessException("INVALID_PROFILE",
+                        "Existing profile " + existingProfileId + " is MERGED or DELETED"));
             }
-        }
+            if (isMergedOrDeleted(newProfile.getStatus())) {
+                return Mono.error(new BusinessException("INVALID_PROFILE",
+                        "New profile " + newProfileId + " is MERGED or DELETED"));
+            }
 
-        // Calculate score
+            return candidateRepository.existsPendingOrMergedBetween(existingProfileId, newProfileId)
+                    .flatMap(exists -> {
+                        if (Boolean.TRUE.equals(exists)) {
+                            return candidateRepository.findBetween(existingProfileId, newProfileId)
+                                    .next()
+                                    .doOnNext(c -> log.info("ProfileMatchCandidateServiceImpl - candidate already " +
+                                                    "exists between ({},{}), returning existing",
+                                            existingProfileId, newProfileId))
+                                    .switchIfEmpty(Mono.defer(() ->
+                                            buildAndPersistCandidateFromIncoming(existing, newProfile, incomingData)));
+                        }
+                        return buildAndPersistCandidateFromIncoming(existing, newProfile, incomingData);
+                    });
+        });
+    }
+
+    private Mono<ProfileMatchCandidate> buildAndPersistCandidateFromIncoming(MasterProfile existing,
+                                                                              MasterProfile newProfile,
+                                                                              NormalizedProfileData incomingData) {
         ProfileMatchScoreResult scoreResult = scoreService.calculate(existing, newProfile);
 
-        // Build candidate
-        ProfileIdentityLink existingLink = getPrimaryLink(existingProfileId);
-        ProfileIdentityLink newLink     = getPrimaryLink(newProfileId);
+        return Mono.zip(optional(getPrimaryLink(existing.getId())), optional(getPrimaryLink(newProfile.getId())))
+                .flatMap(links -> {
+                    ProfileIdentityLink existingLink = links.getT1().orElse(null);
+                    ProfileIdentityLink newLink = links.getT2().orElse(null);
 
-        ProfileMatchCandidate candidate = new ProfileMatchCandidate();
-        candidate.setLeftMasterProfileId(existingProfileId);
-        candidate.setRightMasterProfileId(newProfileId);
-        candidate.setLeftSourceSystem(existingLink != null ? existingLink.getSourceSystem() : null);
-        candidate.setLeftSourceCustomerId(existingLink != null ? existingLink.getSourceCustomerId() : null);
-        // Use incoming data for right side — it's freshest
-        candidate.setRightSourceSystem(incomingData.getSourceSystem());
-        candidate.setRightSourceCustomerId(incomingData.getSourceCustomerId());
-        candidate.setLeftSnapshot(buildSnapshot(existing, existingLink));
-        candidate.setRightSnapshot(buildSnapshot(newProfile, newLink));
-        candidate.setMatchScore(scoreResult.getScore());
-        candidate.setMatchLevel(scoreResult.getMatchLevel());
-        candidate.setStatus(STATUS_PENDING);
-        candidate = candidateRepository.save(candidate);
+                    ProfileMatchCandidate candidate = new ProfileMatchCandidate();
+                    candidate.setLeftMasterProfileId(existing.getId());
+                    candidate.setRightMasterProfileId(newProfile.getId());
+                    candidate.setLeftSourceSystem(existingLink != null ? existingLink.getSourceSystem() : null);
+                    candidate.setLeftSourceCustomerId(existingLink != null ? existingLink.getSourceCustomerId() : null);
+                    // Use incoming data for right side — it's freshest
+                    candidate.setRightSourceSystem(incomingData.getSourceSystem());
+                    candidate.setRightSourceCustomerId(incomingData.getSourceCustomerId());
+                    candidate.setLeftSnapshot(buildSnapshot(existing, existingLink));
+                    candidate.setRightSnapshot(buildSnapshot(newProfile, newLink));
+                    candidate.setMatchScore(scoreResult.getScore());
+                    candidate.setMatchLevel(scoreResult.getMatchLevel());
+                    candidate.setStatus(STATUS_PENDING);
 
-        final Long candidateId = candidate.getId();
-        LocalDateTime now = LocalDateTime.now();
-        List<ProfileMatchReason> reasons = scoreResult.getReasons().stream().map(item -> {
-            ProfileMatchReason r = new ProfileMatchReason();
-            r.setMatchCandidateId(candidateId);
-            r.setReasonType(item.getReasonType());
-            r.setReasonMessage(item.getReasonMessage());
-            r.setLeftValue(item.getLeftValue());
-            r.setRightValue(item.getRightValue());
-            r.setScore(item.getScore());
-            return r;
-        }).collect(Collectors.toList());
-        reasonRepository.saveAll(reasons);
-
-        log.info("ProfileMatchCandidateServiceImpl - created candidate id={} between ({},{}), score={}",
-                candidateId, existingProfileId, newProfileId, scoreResult.getScore());
-        return candidate;
+                    return candidateRepository.save(candidate)
+                            .flatMap(saved -> saveReasons(saved.getId(), scoreResult.getReasons())
+                                    .thenReturn(saved))
+                            .doOnNext(saved -> log.info("ProfileMatchCandidateServiceImpl - created candidate " +
+                                            "id={} between ({},{}), score={}",
+                                    saved.getId(), existing.getId(), newProfile.getId(), scoreResult.getScore()));
+                });
     }
 
     // =====================================================================
@@ -558,143 +655,202 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
     // =====================================================================
 
     @Override
-    public void detectAndCreateCandidatesForProfile(Long masterProfileId) {
-        Optional<MasterProfile> opt = masterProfileRepository.findById(masterProfileId);
-        if (opt.isEmpty()) {
-            log.warn("ProfileMatchCandidateServiceImpl - detectAndCreate: profile {} not found", masterProfileId);
-            return;
-        }
-        MasterProfile profile = opt.get();
+    public Mono<Void> detectAndCreateCandidatesForProfile(Long masterProfileId) {
+        return masterProfileRepository.findById(masterProfileId)
+                .flatMap(profile -> {
+                    if (isMergedOrDeleted(profile.getStatus())) {
+                        log.debug("ProfileMatchCandidateServiceImpl - detectAndCreate: skip merged/deleted profile {}",
+                                masterProfileId);
+                        return Mono.<Void>empty();
+                    }
+                    return buildCandidatePoolIds(profile)
+                            .flatMap(candidateIds -> {
+                                log.info("ProfileMatchCandidateServiceImpl - detectAndCreate: profile={}, " +
+                                        "candidate pool size={}", masterProfileId, candidateIds.size());
+                                return Flux.fromIterable(candidateIds)
+                                        .concatMap(candidateId -> processOneCandidate(profile, candidateId))
+                                        .then();
+                            });
+                })
+                .switchIfEmpty(Mono.fromRunnable(() -> log.warn(
+                        "ProfileMatchCandidateServiceImpl - detectAndCreate: profile {} not found", masterProfileId)))
+                .then();
+    }
 
-        if (profile.getStatus() != null
-                && (profile.getStatus() == PROFILE_MERGED || profile.getStatus() == PROFILE_DELETED)) {
-            log.debug("ProfileMatchCandidateServiceImpl - detectAndCreate: skip merged/deleted profile {}", masterProfileId);
-            return;
-        }
+    private Mono<Set<Long>> buildCandidatePoolIds(MasterProfile profile) {
+        Long selfId = profile.getId();
 
-        Set<Long> candidateProfileIds = new LinkedHashSet<>();
-
-        if (StringUtils.hasText(profile.getIdentityNo())) {
-            addToPool(masterProfileRepository.findByIdentityNo(profile.getIdentityNo()),
-                    masterProfileId, candidateProfileIds, "CCCD");
-        }
+        Mono<List<Long>> byIdentityNo = StringUtils.hasText(profile.getIdentityNo())
+                ? poolByKey(masterProfileRepository.findByIdentityNo(profile.getIdentityNo()), selfId, "CCCD")
+                : Mono.just(List.of());
         // MST phải có trong pool, nếu không nhánh deterministic MST của resolveMatch() không bao giờ
         // được kích hoạt từ luồng detect: hai hồ sơ doanh nghiệp trùng MST nhưng khác
         // CCCD/SĐT/email sẽ không bao giờ được ghép cặp để so.
-        if (StringUtils.hasText(profile.getTaxCode())) {
-            addToPool(masterProfileRepository.findByTaxCode(profile.getTaxCode()),
-                    masterProfileId, candidateProfileIds, "MST");
-        }
-        if (StringUtils.hasText(profile.getPhone())) {
-            addToPool(masterProfileRepository.findByPhone(profile.getPhone()),
-                    masterProfileId, candidateProfileIds, "SĐT");
-        }
-        if (StringUtils.hasText(profile.getEmail())) {
-            addToPool(masterProfileRepository.findByEmail(profile.getEmail()),
-                    masterProfileId, candidateProfileIds, "email");
-        }
-        // Khóa duy nhất do nguồn cấp (KHL_CODE/CRM_ID/POST_ID/APP_USER_ID/PAYMENT_ID) — mirror
-        // FP2c của ProfileMergeDecisionService. Thiếu bước này thì 2 hồ sơ trùng PostID nhưng khác
-        // CCCD/MST/SĐT/email sẽ không bao giờ được ghép cặp để so ở luồng admin.
-        for (ProfileIdentityLink ownLink : identityLinkRepository.findByMasterProfileIdAndStatus(masterProfileId, (short) 1)) {
-            if (!UNIQUE_TYPED_IDENTITY_TYPES.contains(ownLink.getIdentityType())) {
-                continue;
+        Mono<List<Long>> byTaxCode = StringUtils.hasText(profile.getTaxCode())
+                ? poolByKey(masterProfileRepository.findByTaxCode(profile.getTaxCode()), selfId, "MST")
+                : Mono.just(List.of());
+        Mono<List<Long>> byPhone = StringUtils.hasText(profile.getPhone())
+                ? poolByKey(masterProfileRepository.findByPhone(profile.getPhone()), selfId, "SĐT")
+                : Mono.just(List.of());
+        Mono<List<Long>> byEmail = StringUtils.hasText(profile.getEmail())
+                ? poolByKey(masterProfileRepository.findByEmail(profile.getEmail()), selfId, "email")
+                : Mono.just(List.of());
+
+        return Mono.zip(byIdentityNo, byTaxCode, byPhone, byEmail, poolByTypedLinks(selfId))
+                .map(t -> {
+                    Set<Long> ids = new LinkedHashSet<>();
+                    ids.addAll(t.getT1());
+                    ids.addAll(t.getT2());
+                    ids.addAll(t.getT3());
+                    ids.addAll(t.getT4());
+                    ids.addAll(t.getT5());
+                    return ids;
+                });
+    }
+
+    /**
+     * Id của các hồ sơ tìm được theo một khóa, bỏ chính hồ sơ đang xét.
+     *
+     * <p>Nếu một giá trị khóa khớp quá nhiều hồ sơ thì nó không còn tính phân biệt — thực tế là SĐT
+     * rác / hotline shipper / "0000000000". Ghép cặp với tất cả sẽ sinh hàng loạt candidate nhiễu và
+     * làm ngập màn đối soát, nên bỏ qua khóa đó và ghi log để đội dữ liệu biết mà xử lý.
+     */
+    private Mono<List<Long>> poolByKey(Flux<MasterProfile> found, Long selfId, String keyLabel) {
+        return found.collectList().map(list -> {
+            if (list.size() > MAX_PROFILES_PER_KEY) {
+                log.warn("ProfileMatchCandidateServiceImpl - {} hồ sơ cùng {} (> {}) → khóa không có tính "
+                                + "phân biệt, bỏ qua để tránh sinh candidate hàng loạt. profileId={}",
+                        list.size(), keyLabel, MAX_PROFILES_PER_KEY, selfId);
+                return List.<Long>of();
             }
-            identityLinkRepository.findByIdentityTypeAndIdentityValue(ownLink.getIdentityType(), ownLink.getIdentityValue())
-                    .stream()
-                    .filter(l -> l.getStatus() != null && l.getStatus() == 1)
-                    .map(ProfileIdentityLink::getMasterProfileId)
-                    .filter(id -> !id.equals(masterProfileId))
-                    .forEach(candidateProfileIds::add);
+            return list.stream()
+                    .map(MasterProfile::getId)
+                    .filter(id -> !id.equals(selfId))
+                    .toList();
+        });
+    }
+
+    /**
+     * Khóa duy nhất do nguồn cấp (KHL_CODE/CRM_ID/POST_ID/APP_USER_ID/PAYMENT_ID) — mirror FP2c của
+     * {@code ProfileMergeDecisionService}. Thiếu bước này thì 2 hồ sơ trùng PostID nhưng khác
+     * CCCD/MST/SĐT/email sẽ không bao giờ được ghép cặp để so ở luồng admin.
+     */
+    private Mono<List<Long>> poolByTypedLinks(Long selfId) {
+        return identityLinkRepository.findByMasterProfileIdAndStatus(selfId, (short) 1)
+                .filter(ownLink -> UNIQUE_TYPED_IDENTITY_TYPES.contains(ownLink.getIdentityType()))
+                .concatMap(ownLink -> identityLinkRepository
+                        .findByIdentityTypeAndIdentityValue(ownLink.getIdentityType(), ownLink.getIdentityValue())
+                        .filter(l -> l.getStatus() != null && l.getStatus() == 1)
+                        .map(ProfileIdentityLink::getMasterProfileId)
+                        .filter(id -> !id.equals(selfId)))
+                .distinct()
+                .collectList();
+    }
+
+    private Mono<Void> processOneCandidate(MasterProfile profile, Long candidateProfileId) {
+        return masterProfileRepository.findById(candidateProfileId)
+                .flatMap(candidateProfile -> {
+                    if (isMergedOrDeleted(candidateProfile.getStatus())) {
+                        return Mono.<Void>empty();
+                    }
+                    return resolveMatch(profile, candidateProfile)
+                            .flatMap(scoreResult -> processScoredPair(profile, candidateProfile, scoreResult));
+                })
+                .onErrorResume(ex -> {
+                    log.error("ProfileMatchCandidateServiceImpl - error for pair ({},{}): {}",
+                            profile.getId(), candidateProfileId, ex.getMessage(), ex);
+                    return Mono.empty();
+                });
+    }
+
+    private Mono<Void> processScoredPair(MasterProfile profile, MasterProfile candidateProfile,
+                                         ProfileMatchScoreResult scoreResult) {
+        Long candidateProfileId = candidateProfile.getId();
+        if (scoreResult.getScore().compareTo(MIN_CANDIDATE_SCORE) < 0) {
+            log.debug("ProfileMatchCandidateServiceImpl - score {} too low for pair ({},{})",
+                    scoreResult.getScore(), profile.getId(), candidateProfileId);
+            return Mono.empty();
         }
 
-        log.info("ProfileMatchCandidateServiceImpl - detectAndCreate: profile={}, candidate pool size={}",
-                masterProfileId, candidateProfileIds.size());
+        Mono<Boolean> hasPendingMono = Mono.zip(
+                candidateRepository.existsByLeftMasterProfileIdAndRightMasterProfileIdAndStatus(
+                        profile.getId(), candidateProfileId, STATUS_PENDING),
+                candidateRepository.existsByRightMasterProfileIdAndLeftMasterProfileIdAndStatus(
+                        profile.getId(), candidateProfileId, STATUS_PENDING)
+        ).map(t -> Boolean.TRUE.equals(t.getT1()) || Boolean.TRUE.equals(t.getT2()));
+        Mono<Boolean> hasMergedMono = Mono.zip(
+                candidateRepository.existsByLeftMasterProfileIdAndRightMasterProfileIdAndStatus(
+                        profile.getId(), candidateProfileId, STATUS_MERGED),
+                candidateRepository.existsByRightMasterProfileIdAndLeftMasterProfileIdAndStatus(
+                        profile.getId(), candidateProfileId, STATUS_MERGED)
+        ).map(t -> Boolean.TRUE.equals(t.getT1()) || Boolean.TRUE.equals(t.getT2()));
 
-        for (Long candidateProfileId : candidateProfileIds) {
-            try {
-                Optional<MasterProfile> candidateOpt = masterProfileRepository.findById(candidateProfileId);
-                if (candidateOpt.isEmpty()) continue;
-                MasterProfile candidateProfile = candidateOpt.get();
+        return Mono.zip(hasPendingMono, hasMergedMono)
+                .flatMap(t -> {
+                    if (t.getT1() || t.getT2()) {
+                        log.debug("ProfileMatchCandidateServiceImpl - already has pending/merged " +
+                                "candidate for pair ({},{})", profile.getId(), candidateProfileId);
+                        return Mono.<Void>empty();
+                    }
+                    return continueOrCreate(profile, candidateProfile, scoreResult);
+                });
+    }
 
-                if (candidateProfile.getStatus() != null
-                        && (candidateProfile.getStatus() == PROFILE_MERGED
-                        || candidateProfile.getStatus() == PROFILE_DELETED)) {
-                    continue;
-                }
-
-                ProfileMatchScoreResult scoreResult = resolveMatch(profile, candidateProfile);
-                if (scoreResult.getScore().compareTo(MIN_CANDIDATE_SCORE) < 0) {
-                    log.debug("ProfileMatchCandidateServiceImpl - score {} too low for pair ({},{})",
-                            scoreResult.getScore(), masterProfileId, candidateProfileId);
-                    continue;
-                }
-
-                // Check for existing PENDING or MERGED
-                boolean hasPending = candidateRepository.existsByLeftMasterProfileIdAndRightMasterProfileIdAndStatus(
-                        masterProfileId, candidateProfileId, STATUS_PENDING)
-                        || candidateRepository.existsByRightMasterProfileIdAndLeftMasterProfileIdAndStatus(
-                        masterProfileId, candidateProfileId, STATUS_PENDING);
-                boolean hasMerged = candidateRepository.existsByLeftMasterProfileIdAndRightMasterProfileIdAndStatus(
-                        masterProfileId, candidateProfileId, STATUS_MERGED)
-                        || candidateRepository.existsByRightMasterProfileIdAndLeftMasterProfileIdAndStatus(
-                        masterProfileId, candidateProfileId, STATUS_MERGED);
-
-                if (hasPending || hasMerged) {
-                    log.debug("ProfileMatchCandidateServiceImpl - already has pending/merged candidate for pair ({},{})",
-                            masterProfileId, candidateProfileId);
-                    continue;
-                }
-
-                // Check IGNORED/REJECTED — only create if score is >= 10 higher
-                Optional<ProfileMatchCandidate> existingOpt = findExistingCandidate(masterProfileId, candidateProfileId);
-                if (existingOpt.isPresent()) {
-                    ProfileMatchCandidate existing = existingOpt.get();
+    /**
+     * Kiểm tra candidate IGNORED/REJECTED cũ (chỉ tạo lại nếu score cao hơn >= 10 điểm), rồi
+     * luôn gọi persistCandidateWithReasons — kể cả khi có candidate cũ ở trạng thái khác (EXPIRED...),
+     * đúng theo fallthrough của bản gốc.
+     */
+    private Mono<Void> continueOrCreate(MasterProfile profile, MasterProfile candidateProfile,
+                                         ProfileMatchScoreResult scoreResult) {
+        return findExistingCandidate(profile.getId(), candidateProfile.getId())
+                .flatMap(existing -> {
                     if (existing.getStatus() == STATUS_IGNORED || existing.getStatus() == STATUS_REJECTED) {
                         BigDecimal diff = scoreResult.getScore().subtract(existing.getMatchScore());
                         if (diff.compareTo(MIN_SCORE_IMPROVEMENT) < 0) {
-                            continue;
+                            return Mono.just(false);
                         }
                         existing.setStatus(STATUS_EXPIRED);
-                        candidateRepository.save(existing);
+                        return candidateRepository.save(existing).thenReturn(true);
                     }
-                }
-
-                persistCandidateWithReasons(profile, candidateProfile, scoreResult);
-                log.info("ProfileMatchCandidateServiceImpl - created candidate for pair ({},{})",
-                        masterProfileId, candidateProfileId);
-
-            } catch (Exception ex) {
-                log.error("ProfileMatchCandidateServiceImpl - error for pair ({},{}): {}",
-                        masterProfileId, candidateProfileId, ex.getMessage(), ex);
-            }
-        }
+                    return Mono.just(true);
+                })
+                .defaultIfEmpty(true)
+                .flatMap(proceed -> {
+                    if (!Boolean.TRUE.equals(proceed)) {
+                        return Mono.empty();
+                    }
+                    return persistCandidateWithReasons(profile, candidateProfile, scoreResult)
+                            .doOnNext(saved -> log.info(
+                                    "ProfileMatchCandidateServiceImpl - created candidate for pair ({},{})",
+                                    profile.getId(), candidateProfile.getId()));
+                })
+                .then();
     }
 
     // =====================================================================
-    // PRIVATE HELPERS
+    // DETERMINISTIC-FIRST — khóa mạnh quyết định trước, điểm cộng dồn chỉ là fallback
     // =====================================================================
 
     /**
-     * Deterministic-first matching cho luồng ADMIN, mirror đúng thứ tự đã có sẵn ở
-     * {@code ProfileMergeDecisionService} của luồng ingestion: CCCD → MST → probabilistic.
+     * Điểm cuối cùng của một cặp hồ sơ: chạy scorer trước để có đủ reasons, rồi nếu so được một
+     * khóa mạnh thì ghi đè điểm bằng mốc deterministic tương ứng.
      *
-     * <p>Lý do tồn tại: {@link ProfileMatchScoreService} chỉ cộng dồn điểm, nên hai hồ sơ trùng
-     * CCCD (hoặc trùng MST) hoàn toàn chỉ được 50/100 — không đạt ngưỡng auto-merge và bị xếp
-     * ngang một cặp chỉ trùng vài tín hiệu yếu. Khóa mạnh trùng khớp là bằng chứng deterministic
-     * nên điểm được nâng thẳng lên {@link #DETERMINISTIC_SCORE_IDENTITY} /
-     * {@link #DETERMINISTIC_SCORE_TAX}.
+     * <p>Lý do tồn tại: scorer là additive nên hai hồ sơ trùng CCCD (hoặc trùng MST) hoàn toàn chỉ
+     * được {@code SCORE_IDENTITY_NO}/100 — không đạt ngưỡng auto-merge và bị xếp ngang một cặp chỉ
+     * trùng vài tín hiệu yếu. Thứ tự xét mirror {@code ProfileMergeDecisionService} của ingestion:
+     * CCCD → MST → khóa typed → probabilistic.
      *
      * <p>Danh sách reason của scorer được GIỮ NGUYÊN (không rút còn một dòng): màn đối chiếu cần
-     * thấy đủ bằng chứng, và {@code matchedKeys} ở màn nhóm lấy trực tiếp từ bảng reason nên rút
-     * bớt sẽ làm mất khoá khớp trên UI.
+     * thấy đủ bằng chứng, và {@code matchedKeys} lấy trực tiếp từ bảng reason nên rút bớt sẽ làm mất
+     * khoá khớp trên UI.
      *
      * <p>Nhánh XUNG ĐỘT khóa mạnh cố tình KHÔNG tự đặt điểm: trả nguyên kết quả probabilistic, vì
-     * scorer đã set {@code identityConflict=true} khiến {@code autoMergeRecommended} luôn false,
-     * đồng thời giữ đúng hành vi hiện tại của ngưỡng 70 — cặp khác CCCD chỉ vô tình trùng SĐT vẫn
-     * không sinh candidate nhiễu.
+     * scorer đã set {@code identityConflict=true} khiến {@code autoMergeRecommended} luôn false.
+     * Nếu trả điểm thấp cố định thì {@code createCandidate()} sẽ throw SCORE_TOO_LOW và luồng detect
+     * sẽ skip, làm MẤT candidate cần review.
      */
-    private ProfileMatchScoreResult resolveMatch(MasterProfile left, MasterProfile right) {
+    private Mono<ProfileMatchScoreResult> resolveMatch(MasterProfile left, MasterProfile right) {
         ProfileMatchScoreResult scoreResult = scoreService.calculate(left, right);
 
         // 1. CCCD — khóa mạnh nhất, ưu tiên tuyệt đối trên MST: khớp hay lệch CCCD đều là quyết
@@ -707,10 +863,10 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
                                 + "→ giữ điểm probabilistic score={}, autoMerge={}",
                         left.getId(), right.getId(), scoreResult.getScore(),
                         scoreResult.isAutoMergeRecommended());
-                return scoreResult;
+                return Mono.just(scoreResult);
             }
-            return promoteDeterministic(scoreResult, DETERMINISTIC_SCORE_IDENTITY,
-                    "identityNo match", left, right);
+            return Mono.just(promoteDeterministic(scoreResult, DETERMINISTIC_SCORE_IDENTITY,
+                    "identityNo match", left, right));
         }
 
         // 2. MST — định danh mạnh của khách doanh nghiệp. Chỉ xét khi không so được CCCD.
@@ -722,31 +878,30 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
                                 + "→ giữ điểm probabilistic score={}, autoMerge={}",
                         left.getId(), right.getId(), scoreResult.getScore(),
                         scoreResult.isAutoMergeRecommended());
-                return scoreResult;
+                return Mono.just(scoreResult);
             }
             if (nameCompatible(left.getFullName(), right.getFullName())) {
-                return promoteDeterministic(scoreResult, DETERMINISTIC_SCORE_TAX,
-                        "taxCode match (name ok)", left, right);
+                return Mono.just(promoteDeterministic(scoreResult, DETERMINISTIC_SCORE_TAX,
+                        "taxCode match (name ok)", left, right));
             }
             // Khớp MST nhưng tên lệch xa: rất có thể là hai nhân viên khai chung MST/SĐT/email
-            // công ty. Điểm cộng dồn (MST 50 + SĐT 40 + email 35) tự vượt 95 nên phải chặn tay,
-            // mirror NEED_REVIEW của ingestion.
+            // công ty. Điểm cộng dồn (MST 50 + SĐT 40 + email 35) tự vượt ngưỡng auto-merge nên phải
+            // chặn tay, mirror NEED_REVIEW của ingestion.
             scoreResult.setAutoMergeRecommended(false);
             log.info("ProfileMatchCandidateServiceImpl - resolveMatch pair ({},{}): taxCode match nhưng tên "
-                            + "lệch > 25% → chặn auto-merge, score={}",
+                            + "lệch quá xa → chặn auto-merge, score={}",
                     left.getId(), right.getId(), scoreResult.getScore());
-            return scoreResult;
+            return Mono.just(scoreResult);
         }
 
         // 3. Khóa duy nhất do nguồn cấp (KHL_CODE/CRM_ID/POST_ID/APP_USER_ID/PAYMENT_ID) — chỉ xét
         // khi không so được CCCD lẫn MST. Mirror FP2c của ProfileMergeDecisionService (ingestion).
-        if (matchedByUniqueTypedId(left, right)) {
-            return promoteDeterministic(scoreResult, DETERMINISTIC_SCORE_TYPED_ID,
-                    "typed identifier match", left, right);
-        }
-
-        // 4. Không có khóa mạnh nào so được cả hai bên → probabilistic thuần như trước.
-        return scoreResult;
+        return matchedByUniqueTypedId(left, right)
+                .map(matched -> Boolean.TRUE.equals(matched)
+                        ? promoteDeterministic(scoreResult, DETERMINISTIC_SCORE_TYPED_ID,
+                                "typed identifier match", left, right)
+                        // 4. Không có khóa mạnh nào so được cả hai bên → probabilistic thuần như trước.
+                        : scoreResult);
     }
 
     /**
@@ -757,58 +912,26 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
      * {@code detectAndCreateCandidatesForProfile}, nếu query lại cho từng type thì thành 5 query mỗi
      * hồ sơ (10 mỗi cặp) trong khi tất cả đều là cùng một câu truy vấn.
      */
-    private boolean matchedByUniqueTypedId(MasterProfile left, MasterProfile right) {
-        Map<String, Set<String>> leftByType = activeTypedIdentityValues(left.getId());
-        if (leftByType.isEmpty()) {
-            return false;
-        }
-        Map<String, Set<String>> rightByType = activeTypedIdentityValues(right.getId());
-        for (Map.Entry<String, Set<String>> entry : leftByType.entrySet()) {
-            Set<String> rightValues = rightByType.get(entry.getKey());
-            if (rightValues == null) {
-                continue;
-            }
-            if (entry.getValue().stream().anyMatch(rightValues::contains)) {
-                return true;
-            }
-        }
-        return false;
+    private Mono<Boolean> matchedByUniqueTypedId(MasterProfile left, MasterProfile right) {
+        return activeTypedIdentityValues(left.getId())
+                .flatMap(leftByType -> leftByType.isEmpty()
+                        ? Mono.just(false)
+                        : activeTypedIdentityValues(right.getId())
+                                .map(rightByType -> leftByType.entrySet().stream().anyMatch(entry -> {
+                                    Set<String> rightValues = rightByType.get(entry.getKey());
+                                    return rightValues != null
+                                            && entry.getValue().stream().anyMatch(rightValues::contains);
+                                })));
     }
 
     /** Giá trị các khóa typed đang ACTIVE của một hồ sơ, nhóm theo identityType. */
-    private Map<String, Set<String>> activeTypedIdentityValues(Long masterProfileId) {
-        Map<String, Set<String>> byType = new HashMap<>();
-        for (ProfileIdentityLink link : identityLinkRepository
-                .findByMasterProfileIdAndStatus(masterProfileId, (short) 1)) {
-            if (!UNIQUE_TYPED_IDENTITY_TYPES.contains(link.getIdentityType())
-                    || !StringUtils.hasText(link.getIdentityValue())) {
-                continue;
-            }
-            byType.computeIfAbsent(link.getIdentityType(), k -> new HashSet<>())
-                    .add(link.getIdentityValue());
-        }
-        return byType;
-    }
-
-    /**
-     * Thêm id của các hồ sơ tìm được vào pool, bỏ chính hồ sơ đang xét.
-     *
-     * <p>Nếu một giá trị khóa khớp quá nhiều hồ sơ thì nó không còn tính phân biệt — thực tế là SĐT
-     * rác / hotline shipper / "0000000000". Ghép cặp với tất cả sẽ sinh hàng loạt candidate nhiễu và
-     * làm ngập màn đối soát, nên bỏ qua khóa đó và ghi log để đội dữ liệu biết mà xử lý.
-     */
-    private void addToPool(List<MasterProfile> found, Long selfId, Set<Long> pool, String keyLabel) {
-        if (found.size() > MAX_PROFILES_PER_KEY) {
-            log.warn("ProfileMatchCandidateServiceImpl - {} hồ sơ cùng {} (> {}) → khóa không có tính "
-                            + "phân biệt, bỏ qua để tránh sinh candidate hàng loạt. profileId={}",
-                    found.size(), keyLabel, MAX_PROFILES_PER_KEY, selfId);
-            return;
-        }
-        for (MasterProfile p : found) {
-            if (!p.getId().equals(selfId)) {
-                pool.add(p.getId());
-            }
-        }
+    private Mono<Map<String, Set<String>>> activeTypedIdentityValues(Long masterProfileId) {
+        return identityLinkRepository.findByMasterProfileIdAndStatus(masterProfileId, (short) 1)
+                .filter(link -> UNIQUE_TYPED_IDENTITY_TYPES.contains(link.getIdentityType())
+                        && StringUtils.hasText(link.getIdentityValue()))
+                .<Map<String, Set<String>>>collect(HashMap::new, (byType, link) ->
+                        byType.computeIfAbsent(link.getIdentityType(), k -> new HashSet<>())
+                                .add(link.getIdentityValue()));
     }
 
     /**
@@ -845,31 +968,42 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         return IdentityUtils.calculateNameSimilarity(l, r) >= NAME_SIMILARITY_MIN;
     }
 
-    /**
-     * Core persist: saves ProfileMatchCandidate + ProfileMatchReason rows.
-     */
-    private ProfileMatchCandidate persistCandidateWithReasons(MasterProfile left, MasterProfile right,
-                                                               ProfileMatchScoreResult scoreResult) {
-        ProfileIdentityLink leftLink  = getPrimaryLink(left.getId());
-        ProfileIdentityLink rightLink = getPrimaryLink(right.getId());
+    /** Cùng thang với {@code ProfileMatchScoreService.resolveMatchLevel} để badge trên 2 màn khớp nhau. */
+    private String resolveMatchLevel(BigDecimal score) {
+        if (score == null) return "LOW";
+        if (score.compareTo(BigDecimal.valueOf(IdentityMatchThresholds.LEVEL_VERY_HIGH)) >= 0) return "VERY_HIGH";
+        if (score.compareTo(BigDecimal.valueOf(IdentityMatchThresholds.LEVEL_HIGH)) >= 0) return "HIGH";
+        if (score.compareTo(BigDecimal.valueOf(IdentityMatchThresholds.LEVEL_MEDIUM)) >= 0) return "MEDIUM";
+        return "LOW";
+    }
 
-        ProfileMatchCandidate candidate = new ProfileMatchCandidate();
-        candidate.setLeftMasterProfileId(left.getId());
-        candidate.setRightMasterProfileId(right.getId());
-        candidate.setLeftSourceSystem(leftLink != null ? leftLink.getSourceSystem() : null);
-        candidate.setLeftSourceCustomerId(leftLink != null ? leftLink.getSourceCustomerId() : null);
-        candidate.setRightSourceSystem(rightLink != null ? rightLink.getSourceSystem() : null);
-        candidate.setRightSourceCustomerId(rightLink != null ? rightLink.getSourceCustomerId() : null);
-        candidate.setLeftSnapshot(buildSnapshot(left, leftLink));
-        candidate.setRightSnapshot(buildSnapshot(right, rightLink));
-        candidate.setMatchScore(scoreResult.getScore());
-        candidate.setMatchLevel(scoreResult.getMatchLevel());
-        candidate.setStatus(STATUS_PENDING);
-        candidate = candidateRepository.save(candidate);
+    private Mono<ProfileMatchCandidate> persistCandidateWithReasons(MasterProfile left, MasterProfile right,
+                                                                     ProfileMatchScoreResult scoreResult) {
+        return Mono.zip(optional(getPrimaryLink(left.getId())), optional(getPrimaryLink(right.getId())))
+                .flatMap(links -> {
+                    ProfileIdentityLink leftLink = links.getT1().orElse(null);
+                    ProfileIdentityLink rightLink = links.getT2().orElse(null);
 
-        final Long candidateId = candidate.getId();
-        LocalDateTime now = LocalDateTime.now();
-        List<ProfileMatchReason> reasons = scoreResult.getReasons().stream().map(item -> {
+                    ProfileMatchCandidate candidate = new ProfileMatchCandidate();
+                    candidate.setLeftMasterProfileId(left.getId());
+                    candidate.setRightMasterProfileId(right.getId());
+                    candidate.setLeftSourceSystem(leftLink != null ? leftLink.getSourceSystem() : null);
+                    candidate.setLeftSourceCustomerId(leftLink != null ? leftLink.getSourceCustomerId() : null);
+                    candidate.setRightSourceSystem(rightLink != null ? rightLink.getSourceSystem() : null);
+                    candidate.setRightSourceCustomerId(rightLink != null ? rightLink.getSourceCustomerId() : null);
+                    candidate.setLeftSnapshot(buildSnapshot(left, leftLink));
+                    candidate.setRightSnapshot(buildSnapshot(right, rightLink));
+                    candidate.setMatchScore(scoreResult.getScore());
+                    candidate.setMatchLevel(scoreResult.getMatchLevel());
+                    candidate.setStatus(STATUS_PENDING);
+
+                    return candidateRepository.save(candidate)
+                            .flatMap(saved -> saveReasons(saved.getId(), scoreResult.getReasons()).thenReturn(saved));
+                });
+    }
+
+    private Mono<Void> saveReasons(Long candidateId, List<ProfileMatchReasonCreateItem> items) {
+        List<ProfileMatchReason> reasons = items.stream().map(item -> {
             ProfileMatchReason r = new ProfileMatchReason();
             r.setMatchCandidateId(candidateId);
             r.setReasonType(item.getReasonType());
@@ -879,19 +1013,36 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
             r.setScore(item.getScore());
             return r;
         }).collect(Collectors.toList());
-        reasonRepository.saveAll(reasons);
-        return candidate;
+        return reasonRepository.saveAll(reasons).then();
     }
 
-    private ProfileIdentityLink getPrimaryLink(Long masterProfileId) {
-        List<ProfileIdentityLink> links = identityLinkRepository.findByMasterProfileId(masterProfileId);
-        return links.stream()
-                .filter(l -> Boolean.TRUE.equals(l.getIsPrimary()) && l.getStatus() == 1)
-                .findFirst()
-                .orElseGet(() -> links.stream()
-                        .filter(l -> l.getStatus() == 1)
-                        .findFirst()
-                        .orElse(links.isEmpty() ? null : links.get(0)));
+    private Mono<ProfileMatchCandidate> findExistingCandidate(Long leftId, Long rightId) {
+        return candidateRepository.findTopByLeftMasterProfileIdAndRightMasterProfileIdOrderByCreatedDesc(leftId, rightId)
+                .switchIfEmpty(candidateRepository
+                        .findTopByRightMasterProfileIdAndLeftMasterProfileIdOrderByCreatedDesc(leftId, rightId));
+    }
+
+    private Mono<ProfileIdentityLink> getPrimaryLink(Long masterProfileId) {
+        return identityLinkRepository.findByMasterProfileId(masterProfileId)
+                .collectList()
+                .flatMap(links -> {
+                    Optional<ProfileIdentityLink> primary = links.stream()
+                            .filter(l -> Boolean.TRUE.equals(l.getIsPrimary()) && l.getStatus() == 1)
+                            .findFirst();
+                    if (primary.isPresent()) {
+                        return Mono.just(primary.get());
+                    }
+                    Optional<ProfileIdentityLink> active = links.stream()
+                            .filter(l -> l.getStatus() == 1)
+                            .findFirst();
+                    if (active.isPresent()) {
+                        return Mono.just(active.get());
+                    }
+                    if (!links.isEmpty()) {
+                        return Mono.just(links.get(0));
+                    }
+                    return Mono.empty();
+                });
     }
 
     private Map<String, Object> buildSnapshot(MasterProfile p, ProfileIdentityLink link) {
@@ -912,8 +1063,11 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         return m;
     }
 
-    private MasterProfile chooseTarget(MasterProfile left, MasterProfile right,
-                                       ProfileMatchCandidate candidate) {
+    // =====================================================================
+    // HELPERS chung cho merge()
+    // =====================================================================
+
+    private MasterProfile chooseTarget(MasterProfile left, MasterProfile right, ProfileMatchCandidate candidate) {
         int leftPri  = getSourcePriority(candidate.getLeftSourceSystem());
         int rightPri = getSourcePriority(candidate.getRightSourceSystem());
 
@@ -972,169 +1126,42 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         }
     }
 
-    private void copyIdentityLinks(Long sourceId, Long targetId, String actor, LocalDateTime now) {
-        List<ProfileIdentityLink> sourceLinks = identityLinkRepository.findByMasterProfileId(sourceId);
-        List<ProfileIdentityLink> targetLinks = identityLinkRepository.findByMasterProfileId(targetId);
-
-        for (ProfileIdentityLink sl : sourceLinks) {
-            boolean exists = targetLinks.stream().anyMatch(tl ->
-                    Objects.equals(tl.getSourceSystem(), sl.getSourceSystem())
-                    && Objects.equals(tl.getSourceCustomerId(), sl.getSourceCustomerId()));
-            if (!exists) {
-                ProfileIdentityLink newLink = new ProfileIdentityLink();
-                newLink.setMasterProfileId(targetId);
-                newLink.setSourceSystem(sl.getSourceSystem());
-                newLink.setSourceCustomerId(sl.getSourceCustomerId());
-                newLink.setIdentityType(sl.getIdentityType());
-                newLink.setIdentityValue(sl.getIdentityValue());
-                newLink.setConfidenceScore(sl.getConfidenceScore());
-                newLink.setIsPrimary(false);
-                newLink.setStatus((short) 1);
-                newLink.setLinkedBy(actor);
-                newLink.setLinkedAt(now);
-                identityLinkRepository.save(newLink);
-            }
-            sl.setStatus((short) 3); // MERGED
-            identityLinkRepository.save(sl);
-        }
-    }
-
-    private void copyAttributeValues(Long sourceId, Long targetId) {
-        List<ProfileAttributeValue> sourceValues = attributeValueRepository.findByMasterProfileId(sourceId);
-        List<ProfileAttributeValue> targetValues = attributeValueRepository.findByMasterProfileId(targetId);
-
-        for (ProfileAttributeValue sv : sourceValues) {
-            boolean exists = targetValues.stream().anyMatch(tv ->
-                    Objects.equals(tv.getSourceSystem(), sv.getSourceSystem())
-                    && Objects.equals(tv.getPropertyName(), sv.getPropertyName())
-                    && Objects.equals(tv.getPropertyValue(), sv.getPropertyValue()));
-            if (!exists) {
-                boolean noSelectedInTarget = targetValues.stream().noneMatch(tv ->
-                        Objects.equals(tv.getPropertyName(), sv.getPropertyName())
-                        && Boolean.TRUE.equals(tv.getIsSelected()));
-                ProfileAttributeValue nv = new ProfileAttributeValue();
-                nv.setMasterProfileId(targetId);
-                nv.setSourceRecordId(sv.getSourceRecordId());
-                nv.setSourceSystem(sv.getSourceSystem());
-                nv.setPropertyName(sv.getPropertyName());
-                nv.setPropertyValue(sv.getPropertyValue());
-                nv.setNormalizedValue(sv.getNormalizedValue());
-                nv.setConfidenceScore(sv.getConfidenceScore());
-                nv.setIsSelected(noSelectedInTarget);
-                nv.setReceivedAt(sv.getReceivedAt());
-                attributeValueRepository.save(nv);
-            }
-        }
-    }
-
-    /**
-     * Chuyển các bảng tham chiếu tới source sang target: customer_events, profile_source_records,
-     * profile_merge_conflicts. Dùng bulk update (không load entity) vì số dòng event có thể lớn.
-     */
-    private void reassignReferencedData(Long sourceId, Long targetId) {
-        int events = customerEventRepository.reassignMasterProfile(sourceId, targetId);
-        int records = sourceRecordRepository.reassignMasterProfile(sourceId, targetId);
-        int conflicts = conflictRepository.reassignMasterProfile(sourceId, targetId);
-        log.info("ProfileMatchCandidateServiceImpl - re-pointed source={} -> target={}: "
-                        + "events={}, sourceRecords={}, conflicts={}",
-                sourceId, targetId, events, records, conflicts);
-    }
-
-    /**
-     * Đánh EXPIRED cho các candidate PENDING khác còn tham chiếu tới hồ sơ vừa bị merge.
-     * Không re-point sang target vì matchScore của chúng được tính trên dữ liệu của source
-     * (đã lỗi thời) và có thể trùng với candidate PENDING đã tồn tại của target. Cặp trùng thật
-     * sẽ được {@link #detectAndCreateCandidatesForProfile(Long)} tạo lại với score tính đúng —
-     * trạng thái EXPIRED không chặn việc tạo lại (khác IGNORED/REJECTED).
-     */
-    private void expireStaleCandidatesForMergedProfile(Long mergedProfileId, Long currentCandidateId,
-                                                       String actor, LocalDateTime now) {
-        List<ProfileMatchCandidate> stale = candidateRepository
-                .findByProfileIdAndStatus(mergedProfileId, STATUS_PENDING)
-                .stream()
-                .filter(c -> !c.getId().equals(currentCandidateId))
-                .collect(Collectors.toList());
-
-        if (stale.isEmpty()) {
-            return;
-        }
-        for (ProfileMatchCandidate c : stale) {
-            c.setStatus(STATUS_EXPIRED);
-            c.setDecisionBy(actor);
-            c.setDecisionAt(now);
-        }
-        candidateRepository.saveAll(stale);
-        log.info("ProfileMatchCandidateServiceImpl - expired {} stale PENDING candidate(s) referencing "
-                + "merged profile {}", stale.size(), mergedProfileId);
-    }
-
-    private void syncToUnomi(MasterProfile profile, String syncType) {
-        ProfileUnomiSyncLog syncLog = new ProfileUnomiSyncLog();
-        syncLog.setMasterProfileId(profile.getId());
-        syncLog.setProfileCode(profile.getProfileCode());
-        syncLog.setSyncType(syncType);
-        syncLog.setCreatedBy(SecurityUtils.getCurrentUsername().orElse("system"));
-        try {
-            Object result = unomiService.syncProfileToUnomi(profile).block();
-            syncLog.setStatus((short) 1);
-            syncLog.setResponsePayload(result != null ? objectMapper.convertValue(result, Map.class) : null);
-            syncLog.setSyncedAt(LocalDateTime.now());
-            profile.setSyncedToUnomiAt(LocalDateTime.now());
-            masterProfileRepository.save(profile);
-        } catch (Exception ex) {
-            syncLog.setStatus((short) 2);
-            syncLog.setErrorMessage(ex.getMessage());
-            syncLog.setSyncedAt(LocalDateTime.now());
-            log.error("ProfileMatchCandidateServiceImpl - Unomi sync FAILED: profileCode={}",
-                    profile.getProfileCode(), ex);
-        }
-        unomiSyncLogRepository.save(syncLog);
-    }
-
-    private Optional<ProfileMatchCandidate> findExistingCandidate(Long leftId, Long rightId) {
-        return candidateRepository
-                .findTopByLeftMasterProfileIdAndRightMasterProfileIdOrderByCreatedDesc(leftId, rightId)
-                .or(() -> candidateRepository
-                        .findTopByRightMasterProfileIdAndLeftMasterProfileIdOrderByCreatedDesc(leftId, rightId));
-    }
-
-    private ProfileMatchCandidate loadCandidate(Long id) {
-        return candidateRepository.findById(id)
-                .orElseThrow(() -> new BusinessException("NOT_FOUND", "Match candidate not found: " + id));
-    }
-
-    private MasterProfile loadProfile(Long id) {
+    private Mono<MasterProfile> loadProfile(Long id) {
         return masterProfileRepository.findById(id)
-                .orElseThrow(() -> new BusinessException("NOT_FOUND", "Master profile not found: " + id));
+                .switchIfEmpty(Mono.error(new BusinessException("NOT_FOUND", "Master profile not found: " + id)));
     }
 
-    private MasterProfile loadActiveProfile(Long id) {
-        MasterProfile p = loadProfile(id);
-        if (p.getStatus() != null
-                && (p.getStatus() == PROFILE_MERGED || p.getStatus() == PROFILE_DELETED)) {
-            throw new BusinessException("INVALID_PROFILE",
-                    "Profile " + id + " is MERGED or DELETED and cannot be used for matching");
-        }
-        return p;
+    private Mono<MasterProfile> loadActiveProfile(Long id) {
+        return loadProfile(id).flatMap(p -> isMergedOrDeleted(p.getStatus())
+                ? Mono.error(new BusinessException("INVALID_PROFILE",
+                        "Profile " + id + " is MERGED or DELETED and cannot be used for matching"))
+                : Mono.just(p));
     }
 
-    private void validatePending(ProfileMatchCandidate candidate) {
+    private Mono<ProfileMatchCandidate> loadCandidate(Long id) {
+        return candidateRepository.findById(id)
+                .switchIfEmpty(Mono.error(new BusinessException("NOT_FOUND", "Match candidate not found: " + id)));
+    }
+
+    private Mono<ProfileMatchCandidate> validatePending(ProfileMatchCandidate candidate) {
         if (candidate.getStatus() != STATUS_PENDING) {
-            throw new BusinessException("INVALID_STATUS",
-                    "Candidate must be in PENDING status. Current: " + candidate.getStatus());
+            return Mono.error(new BusinessException("INVALID_STATUS",
+                    "Candidate must be in PENDING status. Current: " + candidate.getStatus()));
         }
+        return Mono.just(candidate);
+    }
+
+    private boolean isMergedOrDeleted(Short status) {
+        return status != null && (status == PROFILE_MERGED || status == PROFILE_DELETED);
+    }
+
+    private static <T> Mono<Optional<T>> optional(Mono<T> mono) {
+        return mono.map(Optional::of).defaultIfEmpty(Optional.empty());
     }
 
     // =====================================================================
     // RESPONSE MAPPING
     // =====================================================================
-
-    private ProfileMatchCandidateResponse toResponseWithLookup(ProfileMatchCandidate candidate) {
-        MasterProfile left  = masterProfileRepository.findById(candidate.getLeftMasterProfileId()).orElse(null);
-        MasterProfile right = masterProfileRepository.findById(candidate.getRightMasterProfileId()).orElse(null);
-        List<ProfileMatchReason> reasons = reasonRepository.findByMatchCandidateId(candidate.getId());
-        return toResponse(candidate, left, right, reasons);
-    }
 
     private ProfileMatchCandidateResponse toResponse(ProfileMatchCandidate candidate,
                                                       MasterProfile left, MasterProfile right,
@@ -1169,17 +1196,11 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
                 .phone(p.getPhone())
                 .email(p.getEmail())
                 .identityNo(p.getIdentityNo())
-                .taxCode(p.getTaxCode())
-                .dateOfBirth(p.getDateOfBirth())
-                .gender(p.getGender())
                 .customerType(p.getCustomerType())
-                .customerTypeText(CustomerType.textOf(p.getCustomerType()))
                 .provinceCode(p.getProvinceCode())
                 .provinceName(p.getProvinceName())
                 .unitCode(p.getUnitCode())
                 .unitName(p.getUnitName())
-                .profileStatus(p.getStatus())
-                .profileStatusText(profileStatusText(p.getStatus()))
                 .build();
     }
 
@@ -1187,7 +1208,6 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         return ProfileMatchReasonResponse.builder()
                 .id(r.getId())
                 .reasonType(r.getReasonType())
-                .reasonTypeText(reasonTypeText(r.getReasonType()))
                 .reasonMessage(r.getReasonMessage())
                 .leftValue(r.getLeftValue())
                 .rightValue(r.getRightValue())
@@ -1223,63 +1243,4 @@ public class ProfileMatchCandidateServiceImpl implements ProfileMatchCandidateSe
         };
     }
 
-    /** Trạng thái của master profile — khác bảng mã status của candidate ở {@link #statusText}. */
-    private String profileStatusText(Short s) {
-        if (s == null) return "";
-        return switch (s) {
-            case 1  -> "Đang hoạt động";
-            case 2  -> "Ngừng hoạt động";
-            case 3  -> "Đã gộp";
-            case 4  -> "Bị khoá";
-            case 5  -> "Đã xoá";
-            default -> String.valueOf(s);
-        };
-    }
-
-    /** Nhãn hiển thị của khoá khớp trên UI. */
-    private String reasonTypeText(String reasonType) {
-        if (reasonType == null) return "";
-        return switch (reasonType) {
-            case "IDENTITY_NO_MATCH"   -> "CCCD/CMND";
-            case "IDENTITY_CONFLICT"   -> "CCCD/CMND lệch";
-            case "TAX_CODE_MATCH"      -> "MST";
-            case "TAX_CODE_CONFLICT"   -> "MST lệch";
-            case "PHONE_MATCH"         -> "SĐT";
-            case "PHONE_CONFLICT"      -> "SĐT lệch";
-            case "EMAIL_MATCH"         -> "Email";
-            case "EMAIL_CONFLICT"      -> "Email lệch";
-            case "NAME_EXACT_MATCH"    -> "Tên trùng khớp";
-            case "NAME_SIMILAR"        -> "Tên gần đúng";
-            case "DATE_OF_BIRTH_MATCH" -> "Ngày sinh";
-            case "PROVINCE_MATCH"      -> "Tỉnh/TP";
-            case "UNIT_MATCH"          -> "Bưu cục";
-            default                    -> reasonType;
-        };
-    }
-
-    /** Cùng thang với {@code ProfileMatchScoreService.resolveMatchLevel} để badge trên 2 màn khớp nhau. */
-    private String resolveMatchLevel(BigDecimal score) {
-        if (score == null) return "LOW";
-        if (score.compareTo(BigDecimal.valueOf(IdentityMatchThresholds.LEVEL_VERY_HIGH)) >= 0) return "VERY_HIGH";
-        if (score.compareTo(BigDecimal.valueOf(IdentityMatchThresholds.LEVEL_HIGH)) >= 0) return "HIGH";
-        if (score.compareTo(BigDecimal.valueOf(IdentityMatchThresholds.LEVEL_MEDIUM)) >= 0) return "MEDIUM";
-        return "LOW";
-    }
-
-    // ---- Ép kiểu cột của native query (JDBC driver có thể trả Integer/BigInteger/Long) ----
-
-    private Long asLong(Object v) {
-        return v == null ? null : ((Number) v).longValue();
-    }
-
-    private BigDecimal asBigDecimal(Object v) {
-        if (v == null) return null;
-        return v instanceof BigDecimal bd ? bd : BigDecimal.valueOf(((Number) v).doubleValue());
-    }
-
-    private String asString(Object v) {
-        return v == null ? null : v.toString();
-    }
-
 }
-

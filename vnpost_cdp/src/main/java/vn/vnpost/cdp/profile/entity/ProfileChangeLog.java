@@ -1,61 +1,61 @@
 package vn.vnpost.cdp.profile.entity;
 
-import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
 
 import java.time.LocalDateTime;
 
 @Getter
 @Setter
-@Entity
-@Table(name = "profile_change_logs")
+@Table("profile_change_logs")
 public class ProfileChangeLog {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
+    @Column("id")
     private Long id;
 
-    @Column(name = "master_profile_id", nullable = false)
+    @Column("master_profile_id")
     private Long masterProfileId;
 
-    @Column(name = "source_record_id")
+    @Column("source_record_id")
     private Long sourceRecordId;
 
-    @Column(name = "source_system", length = 100)
+    @Column("source_system")
     private String sourceSystem;
 
-    @Column(name = "event_type", length = 100)
+    @Column("event_type")
     private String eventType;
 
-    @Column(name = "property_name", length = 200)
+    @Column("property_name")
     private String propertyName;
 
-    @Column(name = "old_value")
+    @Column("old_value")
     private String oldValue;
 
-    @Column(name = "new_value")
+    @Column("new_value")
     private String newValue;
 
-    @Column(name = "selected_value")
+    @Column("selected_value")
     private String selectedValue;
 
-    @Column(name = "old_source", length = 100)
+    @Column("old_source")
     private String oldSource;
 
-    @Column(name = "new_source", length = 100)
+    @Column("new_source")
     private String newSource;
 
-    @Column(name = "merge_strategy", length = 100)
+    @Column("merge_strategy")
     private String mergeStrategy;
 
-    @Column(name = "reason")
+    @Column("reason")
     private String reason;
 
-    @Column(name = "changed_by", length = 100)
+    @Column("changed_by")
     private String changedBy;
 
-    @Column(name = "changed_at")
+    @Column("changed_at")
     private LocalDateTime changedAt;
 }

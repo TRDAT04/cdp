@@ -2,11 +2,11 @@ package vn.vnpost.cdp.profile.service;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.profile.dto.query.ProfileAddressResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileChangeLogsResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileConsentResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileCskhResponse;
-import vn.vnpost.cdp.profile.dto.query.ProfileDetailResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileDigitalBehaviorResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileIdentityLinkDetailResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileListItemResponse;
@@ -19,18 +19,17 @@ import vn.vnpost.cdp.profile.dto.query.ProfileSummaryResponse;
 import java.util.List;
 
 public interface ProfileQueryService {
-    ProfileDetailResponse getProfileDetail(Long id);
-    Page<ProfileListItemResponse> searchProfiles(ProfileSearchRequest request, Pageable pageable);
+    Mono<Page<ProfileListItemResponse>> searchProfiles(ProfileSearchRequest request, Pageable pageable);
 
     // --- Tách theo tab (chỉ các tab hiện có đủ dữ liệu) ---
-    ProfileOverviewResponse getProfileOverview(Long id);                         // Tab 1
-    List<ProfileIdentityLinkDetailResponse> getProfileIdentityLinks(Long id);    // Tab 2
-    ProfileMultiSourceComparisonResponse getProfileMultiSource(Long id);         // Tab 3
-    ProfileAddressResponse getProfileAddress(Long id);                           // Tab 4
-    ProfileDigitalBehaviorResponse getProfileBehavior(Long id);                  // Tab 6
-    ProfileChangeLogsResponse getProfileChangeLogs(Long id);                     // Tab 10
-    ProfileServiceLinesResponse getProfileServiceLines(Long id);                 // Tab: Mảng dịch vụ
-    ProfileCskhResponse getProfileCskh(Long id);                                 // Tab: CSKH
-    ProfileConsentResponse getProfileConsent(Long id);                           // Tab: Đồng ý dữ liệu
-    ProfileSummaryResponse getProfileSummary(Long id);                           // Summary card
+    Mono<ProfileOverviewResponse> getProfileOverview(Long id);                         // Tab 1
+    Mono<List<ProfileIdentityLinkDetailResponse>> getProfileIdentityLinks(Long id);    // Tab 2
+    Mono<ProfileMultiSourceComparisonResponse> getProfileMultiSource(Long id);         // Tab 3
+    Mono<ProfileAddressResponse> getProfileAddress(Long id);                           // Tab 4
+    Mono<ProfileDigitalBehaviorResponse> getProfileBehavior(Long id);                  // Tab 6
+    Mono<ProfileChangeLogsResponse> getProfileChangeLogs(Long id);                     // Tab 10
+    Mono<ProfileServiceLinesResponse> getProfileServiceLines(Long id);                 // Tab: Mảng dịch vụ
+    Mono<ProfileCskhResponse> getProfileCskh(Long id);                                 // Tab: CSKH
+    Mono<ProfileConsentResponse> getProfileConsent(Long id);                           // Tab: Đồng ý dữ liệu
+    Mono<ProfileSummaryResponse> getProfileSummary(Long id);                           // Summary card
 }

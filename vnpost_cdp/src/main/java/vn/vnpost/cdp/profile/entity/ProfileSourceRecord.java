@@ -1,58 +1,54 @@
 package vn.vnpost.cdp.profile.entity;
 
-import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
-import vn.vnpost.cdp.common.entity.BaseEntity;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
+import vn.vnpost.cdp.common.entity.BaseAuditFields;
 
 import java.time.LocalDateTime;
 import java.util.Map;
 
 @Getter
 @Setter
-@Entity
-@Table(name = "profile_source_records")
-public class ProfileSourceRecord extends BaseEntity {
+@Table("profile_source_records")
+public class ProfileSourceRecord extends BaseAuditFields {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
+    @Column("id")
     private Long id;
 
-    @Column(name = "source_system", length = 100)
+    @Column("source_system")
     private String sourceSystem;
 
-    @Column(name = "source_customer_id", length = 255)
+    @Column("source_customer_id")
     private String sourceCustomerId;
 
-    @Column(name = "source_event_id", length = 255)
+    @Column("source_event_id")
     private String sourceEventId;
 
-    @Column(name = "master_profile_id")
+    @Column("master_profile_id")
     private Long masterProfileId;
 
-    @Column(name = "identity_key", length = 500)
+    @Column("identity_key")
     private String identityKey;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "raw_payload", columnDefinition = "jsonb")
+    @Column("raw_payload")
     private Map<String, Object> rawPayload;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "normalized_payload", columnDefinition = "jsonb")
+    @Column("normalized_payload")
     private Map<String, Object> normalizedPayload;
 
-    @Column(name = "received_at")
+    @Column("received_at")
     private LocalDateTime receivedAt;
 
-    @Column(name = "processed_at")
+    @Column("processed_at")
     private LocalDateTime processedAt;
 
-    @Column(name = "merge_status")
+    @Column("merge_status")
     private Short mergeStatus = 0;
 
-    @Column(name = "error_message")
+    @Column("error_message")
     private String errorMessage;
 }

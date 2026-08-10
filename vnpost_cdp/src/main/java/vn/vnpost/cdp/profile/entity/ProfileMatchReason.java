@@ -1,41 +1,37 @@
 package vn.vnpost.cdp.profile.entity;
 
-import jakarta.persistence.*;
 import lombok.Getter;
-import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 
 @Getter
 @Setter
-@NoArgsConstructor
-@Entity
-@Table(name = "profile_match_reasons")
+@Table("profile_match_reasons")
 public class ProfileMatchReason {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
+    @Column("id")
     private Long id;
 
-    @Column(name = "match_candidate_id", nullable = false)
+    @Column("match_candidate_id")
     private Long matchCandidateId;
 
-    @Column(name = "reason_type", nullable = false, length = 100)
+    @Column("reason_type")
     private String reasonType;
 
-    @Column(name = "reason_message", nullable = false, length = 500)
+    @Column("reason_message")
     private String reasonMessage;
 
-    @Column(name = "left_value")
+    @Column("left_value")
     private String leftValue;
 
-    @Column(name = "right_value")
+    @Column("right_value")
     private String rightValue;
 
-    @Column(name = "score", precision = 5, scale = 2)
+    @Column("score")
     private BigDecimal score;
-
 }

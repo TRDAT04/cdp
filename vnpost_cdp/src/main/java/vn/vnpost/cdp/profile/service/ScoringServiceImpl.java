@@ -3,15 +3,15 @@ package vn.vnpost.cdp.profile.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.common.exception.BusinessException;
 import vn.vnpost.cdp.customer_event.entity.CustomerEvent;
 import vn.vnpost.cdp.customer_event.repository.CustomerEventRepository;
+import vn.vnpost.cdp.customer_event.repository.RfmScoreRow;
 import vn.vnpost.cdp.profile.assembler.ProfileDetailAssembler;
 import vn.vnpost.cdp.profile.dto.query.ProfileDigitalBehaviorResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileScoringResponse;
 import vn.vnpost.cdp.profile.dto.query.ProfileServiceLinesResponse;
-import vn.vnpost.cdp.profile.entity.MasterProfile;
 import vn.vnpost.cdp.profile.repository.MasterProfileRepository;
 
 import java.math.BigDecimal;
@@ -19,12 +19,12 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class ScoringServiceImpl implements ScoringService {
 
     private static final int RFM_WINDOW_MONTHS = 12;
@@ -36,44 +36,50 @@ public class ScoringServiceImpl implements ScoringService {
     private final ProfileDetailAssembler profileDetailAssembler;
 
     @Override
-    public ProfileScoringResponse getProfileScoring(Long id) {
+    public Mono<ProfileScoringResponse> getProfileScoring(Long id) {
         log.info("Scoring profile id={}", id);
-        MasterProfile profile = masterProfileRepository.findById(id)
-                .orElseThrow(() -> new BusinessException("NOT_FOUND", "Profile not found: " + id));
+        return masterProfileRepository.findById(id)
+                .switchIfEmpty(Mono.error(new BusinessException("NOT_FOUND", "Profile not found: " + id)))
+                .flatMap(profile -> {
+                    LocalDateTime now = LocalDateTime.now();
 
-        LocalDateTime now = LocalDateTime.now();
+                    // Đủ lịch sử (uncapped), dùng chung cho CLV, churn, engagement.
+                    return customerEventRepository.findByMasterProfileIdOrderByOccurredAtDesc(profile.getId())
+                            .collectList()
+                            .flatMap(events -> {
+                                ProfileDigitalBehaviorResponse behavior = profileDetailAssembler.assembleBehavior(events);
 
-        // Đủ lịch sử (uncapped), dùng chung cho CLV, churn, engagement.
-        List<CustomerEvent> events =
-                customerEventRepository.findByMasterProfileIdOrderByOccurredAtDesc(profile.getId());
-        ProfileDigitalBehaviorResponse behavior = profileDetailAssembler.assembleBehavior(events);
-
-        return ProfileScoringResponse.builder()
-                .calculatedAt(now)
-                .rfm(computeRfm(profile.getId(), now))
-                .clv(computeClv(profile.getId(), events))
-                .churnScore(computeChurnScore(behavior, now))
-                .engagementScore(computeEngagementScore(behavior, now))
-                .codRiskScore(null)   
-                .fraudScore(null)     
-                .build();
+                                return computeRfm(profile.getId(), now)
+                                        .map(Optional::of)
+                                        .defaultIfEmpty(Optional.empty())
+                                        .map(rfmOpt -> ProfileScoringResponse.builder()
+                                                .calculatedAt(now)
+                                                .rfm(rfmOpt.orElse(null))
+                                                .clv(computeClv(profile.getId(), events))
+                                                .churnScore(computeChurnScore(behavior, now))
+                                                .engagementScore(computeEngagementScore(behavior, now))
+                                                .codRiskScore(null)
+                                                .fraudScore(null)
+                                                .build());
+                            });
+                });
     }
 
     // ------------------------------------------------------------------
     // RFM — percentile/quintile chuẩn ngành (5 = tốt nhất)
     // ------------------------------------------------------------------
 
-    private ProfileScoringResponse.Rfm computeRfm(Long profileId, LocalDateTime now) {
+    private Mono<ProfileScoringResponse.Rfm> computeRfm(Long profileId, LocalDateTime now) {
         LocalDateTime windowStart = now.minusMonths(RFM_WINDOW_MONTHS);
-        List<Object[]> rows = customerEventRepository.findRfmScores(profileId, now, windowStart);
-        if (rows.isEmpty()) {
-            // profile tồn tại nên bình thường luôn có 1 dòng; guard cho chắc.
-            return null;
-        }
-        Object[] row = rows.get(0);
-        int recency = ((Number) row[0]).intValue();
-        int frequency = ((Number) row[1]).intValue();
-        int monetary = ((Number) row[2]).intValue();
+        // profile tồn tại nên bình thường luôn có 1 dòng; Mono rỗng (guard) -> rfm null ở tầng gọi.
+        return customerEventRepository.findRfmScores(profileId, now, windowStart)
+                .map(this::toRfm);
+    }
+
+    private ProfileScoringResponse.Rfm toRfm(RfmScoreRow row) {
+        int recency = row.recencyScore();
+        int frequency = row.frequencyScore();
+        int monetary = row.monetaryScore();
 
         return ProfileScoringResponse.Rfm.builder()
                 .segment(resolveSegment(recency, frequency, monetary))

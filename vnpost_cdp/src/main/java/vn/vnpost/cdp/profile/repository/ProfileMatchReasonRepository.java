@@ -1,13 +1,12 @@
 package vn.vnpost.cdp.profile.repository;
 
-import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.repository.reactive.ReactiveCrudRepository;
+import org.springframework.stereotype.Repository;
+import reactor.core.publisher.Flux;
 import vn.vnpost.cdp.profile.entity.ProfileMatchReason;
 
-import java.util.List;
+@Repository
+public interface ProfileMatchReasonRepository extends ReactiveCrudRepository<ProfileMatchReason, Long> {
 
-public interface ProfileMatchReasonRepository extends JpaRepository<ProfileMatchReason, Long> {
-
-    List<ProfileMatchReason> findByMatchCandidateId(Long matchCandidateId);
-
-    void deleteByMatchCandidateId(Long matchCandidateId);
+    Flux<ProfileMatchReason> findByMatchCandidateId(Long matchCandidateId);
 }

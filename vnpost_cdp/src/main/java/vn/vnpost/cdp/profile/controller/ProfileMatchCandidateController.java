@@ -1,17 +1,16 @@
 package vn.vnpost.cdp.profile.controller;
 
 import jakarta.validation.Valid;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.common.response.MethodResult;
-import vn.vnpost.cdp.profile.dto.match.*;
+import vn.vnpost.cdp.profile.dto.match.ProfileCandidateMergeRequest;
+import vn.vnpost.cdp.profile.dto.match.ProfileMatchCandidateCreateRequest;
+import vn.vnpost.cdp.profile.dto.match.ProfileMatchCandidateSearchRequest;
 import vn.vnpost.cdp.profile.service.match.ProfileMatchCandidateService;
+import vn.vnpost.shared.sercurity.CheckPermission;
 
-@Slf4j
 @RestController
 @RequestMapping("/api/v1/admin/profile-match-candidates")
 public class ProfileMatchCandidateController {
@@ -22,105 +21,92 @@ public class ProfileMatchCandidateController {
         this.candidateService = candidateService;
     }
 
-    /**
-     * GET /v1/admin/profile-match-candidates
-     * Search with optional filters: status, matchLevel, minScore, sourceSystem, keyword, fromDate, toDate
-     */
     @GetMapping
-    public ResponseEntity<MethodResult> search(
+    @CheckPermission(index = 1, title = "Tìm kiếm Match Candidate")
+    public Mono<ResponseEntity<MethodResult>> search(
             @ModelAttribute ProfileMatchCandidateSearchRequest request) {
-        return ResponseEntity.ok(MethodResult.success(candidateService.search(request)));
+        return candidateService.search(request)
+                .map(result -> ResponseEntity.ok(MethodResult.success(result)));
     }
 
-
-    /**
-     * GET /v1/admin/profile-match-candidates/grouped-pending
-     * Màn "Đối soát định danh": mỗi dòng là một hồ sơ gốc kèm số mã chờ xác nhận,
-     * tin cậy cao nhất và khoá khớp nổi bật. Optional filter: keyword. Có phân trang.
-     */
-    @GetMapping("/grouped-pending")
-    public ResponseEntity<MethodResult> groupedPending(
-            @ModelAttribute ProfileMatchGroupSearchRequest request,
-            @PageableDefault(size = 20) Pageable pageable) {
-
-        log.info("GET /api/v1/admin/profile-match-candidates/grouped-pending - keyword={}, page={}, size={}",
-                request.getKeyword(), pageable.getPageNumber(), pageable.getPageSize());
-
-        Page<ProfileMatchGroupResponse> result = candidateService.searchPendingGroups(request, pageable);
-
-        return ResponseEntity.ok(MethodResult.success(result.getContent(), result.getTotalElements()));
+    @GetMapping("/pending")
+    @CheckPermission(index = 2, title = "Xem Match Candidate đang chờ xử lý")
+    public Mono<ResponseEntity<MethodResult>> listPending() {
+        return candidateService.listPending()
+                .map(result -> ResponseEntity.ok(MethodResult.success(result)));
     }
 
-    /**
-     * GET /v1/admin/profile-match-candidates/status/{status}
-     */
     @GetMapping("/status/{status}")
-    public ResponseEntity<MethodResult> listByStatus(@PathVariable Short status) {
-        return ResponseEntity.ok(MethodResult.success(candidateService.listByStatus(status)));
+    @CheckPermission(index = 3, title = "Xem Match Candidate theo trạng thái")
+    public Mono<ResponseEntity<MethodResult>> listByStatus(
+            @PathVariable Short status) {
+        return candidateService.listByStatus(status)
+                .map(result -> ResponseEntity.ok(MethodResult.success(result)));
     }
 
-    /**
-     * GET /v1/admin/profile-match-candidates/{id}
-     */
     @GetMapping("/{id}")
-    public ResponseEntity<MethodResult> getById(@PathVariable Long id) {
-        return ResponseEntity.ok(MethodResult.success(candidateService.getById(id)));
+    @CheckPermission(index = 4, title = "Xem chi tiết Match Candidate")
+    public Mono<ResponseEntity<MethodResult>> getById(
+            @PathVariable Long id) {
+        return candidateService.getById(id)
+                .map(result -> ResponseEntity.ok(MethodResult.success(result)));
     }
 
-    /**
-     * GET /v1/admin/profile-match-candidates/by-profile/{masterProfileId}
-     */
     @GetMapping("/by-profile/{masterProfileId}")
-    public ResponseEntity<MethodResult> listByProfile(@PathVariable Long masterProfileId) {
-        return ResponseEntity.ok(MethodResult.success(candidateService.listByProfile(masterProfileId)));
+    @CheckPermission(index = 5, title = "Xem Match Candidate theo Profile")
+    public Mono<ResponseEntity<MethodResult>> listByProfile(
+            @PathVariable Long masterProfileId) {
+        return candidateService.listByProfile(masterProfileId)
+                .map(result -> ResponseEntity.ok(MethodResult.success(result)));
     }
 
-    /**
-     * POST /v1/admin/profile-match-candidates
-     * Manually create a candidate from two master profiles.
-     */
     @PostMapping
-    public ResponseEntity<MethodResult> create(
+    @CheckPermission(index = 6, title = "Tạo Match Candidate")
+    public Mono<ResponseEntity<MethodResult>> create(
             @Valid @RequestBody ProfileMatchCandidateCreateRequest request) {
-        return ResponseEntity.ok(MethodResult.success(
-                candidateService.createCandidate(
+        return candidateService
+                .createCandidate(
                         request.getLeftMasterProfileId(),
-                        request.getRightMasterProfileId())));
+                        request.getRightMasterProfileId()
+                )
+                .map(result -> ResponseEntity.ok(MethodResult.success(result)));
     }
 
-    /**
-     * POST /v1/admin/profile-match-candidates/{id}/merge
-     */
     @PostMapping("/{id}/merge")
-    public ResponseEntity<MethodResult> merge(
+    @CheckPermission(index = 7, title = "Merge Match Candidate")
+    public Mono<ResponseEntity<MethodResult>> merge(
             @PathVariable Long id,
             @RequestBody ProfileCandidateMergeRequest request) {
-        return ResponseEntity.ok(MethodResult.success(candidateService.merge(id, request)));
+        return candidateService.merge(id, request)
+                .map(result -> ResponseEntity.ok(MethodResult.success(result)));
     }
 
-    /**
-     * POST /v1/admin/profile-match-candidates/{id}/ignore
-     */
     @PostMapping("/{id}/ignore")
-    public ResponseEntity<MethodResult> ignore(@PathVariable Long id) {
-        return ResponseEntity.ok(MethodResult.success(candidateService.ignore(id)));
+    @CheckPermission(index = 8, title = "Ignore Match Candidate")
+    public Mono<ResponseEntity<MethodResult>> ignore(
+            @PathVariable Long id) {
+        return candidateService.ignore(id)
+                .map(result -> ResponseEntity.ok(MethodResult.success(result)));
     }
 
-    /**
-     * POST /v1/admin/profile-match-candidates/{id}/reject
-     */
     @PostMapping("/{id}/reject")
-    public ResponseEntity<MethodResult> reject(@PathVariable Long id) {
-        return ResponseEntity.ok(MethodResult.success(candidateService.reject(id)));
+    @CheckPermission(index = 9, title = "Reject Match Candidate")
+    public Mono<ResponseEntity<MethodResult>> reject(
+            @PathVariable Long id) {
+        return candidateService.reject(id)
+                .map(result -> ResponseEntity.ok(MethodResult.success(result)));
     }
 
-    /**
-     * POST /v1/admin/profile-match-candidates/detect/{masterProfileId}
-     * Manually trigger duplicate detection for one profile.
-     */
     @PostMapping("/detect/{masterProfileId}")
-    public ResponseEntity<MethodResult> detect(@PathVariable Long masterProfileId) {
-        candidateService.detectAndCreateCandidatesForProfile(masterProfileId);
-        return ResponseEntity.ok(MethodResult.success("Detection triggered for profile: " + masterProfileId));
+    @CheckPermission(index = 10, title = "Detect Match Candidate")
+    public Mono<ResponseEntity<MethodResult>> detect(
+            @PathVariable Long masterProfileId) {
+        return candidateService
+                .detectAndCreateCandidatesForProfile(masterProfileId)
+                .thenReturn(ResponseEntity.ok(
+                        MethodResult.success(
+                                "Detection triggered for profile: " + masterProfileId
+                        )
+                ));
     }
 }

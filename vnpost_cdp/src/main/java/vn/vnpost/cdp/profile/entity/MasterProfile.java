@@ -1,16 +1,11 @@
 package vn.vnpost.cdp.profile.entity;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.Setter;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
-import vn.vnpost.cdp.common.entity.BaseEntity;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
+import vn.vnpost.cdp.common.entity.BaseAuditFields;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -18,73 +13,70 @@ import java.util.Map;
 
 @Getter
 @Setter
-@Entity
-@Table(name = "master_profiles")
-public class MasterProfile extends BaseEntity {
+@Table("master_profiles")
+public class MasterProfile extends BaseAuditFields {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
+    @Column("id")
     private Long id;
 
-    @Column(name = "profile_code", nullable = false, unique = true, length = 100)
+    @Column("profile_code")
     private String profileCode;
 
-    @Column(name = "full_name", length = 255)
+    @Column("full_name")
     private String fullName;
 
-    @Column(name = "phone", length = 50)
+    @Column("phone")
     private String phone;
 
-    @Column(name = "email", length = 255)
+    @Column("email")
     private String email;
 
-    @Column(name = "gender", length = 20)
+    @Column("gender")
     private String gender;
 
-    @Column(name = "date_of_birth")
+    @Column("date_of_birth")
     private LocalDate dateOfBirth;
 
-    @Column(name = "identity_no", length = 100)
+    @Column("identity_no")
     private String identityNo;
 
-    @Column(name = "tax_code", length = 50)
+    @Column("tax_code")
     private String taxCode;
 
-    @Column(name = "customer_type", length = 100)
+    @Column("customer_type")
     private String customerType;
 
-    @Column(name = "customer_tier", length = 50)
+    @Column("customer_tier")
     private String customerTier;
 
-    @Column(name = "customer_group", length = 50)
+    @Column("customer_group")
     private String customerGroup;
 
-    @Column(name = "province_code", length = 50)
+    @Column("province_code")
     private String provinceCode;
 
-    @Column(name = "province_name", length = 255)
+    @Column("province_name")
     private String provinceName;
 
-    @Column(name = "unit_code", length = 50)
+    @Column("unit_code")
     private String unitCode;
 
-    @Column(name = "unit_name", length = 255)
+    @Column("unit_name")
     private String unitName;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "source_summary", columnDefinition = "jsonb")
+    @Column("source_summary")
     private Map<String, Object> sourceSummary;
 
-    @Column(name = "last_merged_at")
+    @Column("last_merged_at")
     private LocalDateTime lastMergedAt;
 
-    @Column(name = "synced_to_unomi_at")
+    @Column("synced_to_unomi_at")
     private LocalDateTime syncedToUnomiAt;
 
-    @Column(name = "merged_into_profile_id")
+    @Column("merged_into_profile_id")
     private Long mergedIntoProfileId;
 
-    @Column(name = "status", nullable = false)
+    @Column("status")
     private Short status = 1;
 }

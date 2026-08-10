@@ -1,67 +1,66 @@
 package vn.vnpost.cdp.customer_event.entity;
 
-import jakarta.persistence.*;
-import lombok.*;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
-import vn.vnpost.cdp.common.entity.BaseEntity;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
+import vn.vnpost.cdp.common.entity.BaseAuditFields;
 
 import java.time.LocalDateTime;
 import java.util.Map;
 
-@Entity
+@Table("customer_events")
 @Builder
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@Table(name = "customer_events")
-
-public class CustomerEvent extends BaseEntity {
+public class CustomerEvent extends BaseAuditFields {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column("id")
     private Long id;
 
-    @Column(name = "event_code", nullable = false, unique = true, length = 100)
+    @Column("event_code")
     private String eventCode;
 
-    @Column(name = "master_profile_id")
+    @Column("master_profile_id")
     private Long masterProfileId;
 
-    @Column(name = "profile_code", length = 100)
+    @Column("profile_code")
     private String profileCode;
 
-    @Column(name = "event_type", nullable = false, length = 100)
+    @Column("event_type")
     private String eventType;
 
-    @Column(name = "session_id", length = 255)
+    @Column("session_id")
     private String sessionId;
 
-    @Column(name = "source_system", nullable = false, length = 100)
+    @Column("source_system")
     private String sourceSystem;
 
-    @Column(name = "source_customer_id", nullable = false, length = 255)
+    @Column("source_customer_id")
     private String sourceCustomerId;
 
-    @Column(name = "occurred_at")
+    @Column("occurred_at")
     private LocalDateTime occurredAt;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "properties", columnDefinition = "jsonb")
+    @Column("properties")
     private Map<String, Object> properties;
 
-    @Column(name = "sync_status")
+    @Column("sync_status")
     private Short syncStatus = 0;
 
-    @Column(name = "synced_to_unomi_at")
+    @Column("synced_to_unomi_at")
     private LocalDateTime syncedToUnomiAt;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "source", columnDefinition = "jsonb")
+    @Column("source")
     private Map<String, Object> source;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "target", columnDefinition = "jsonb")
+    @Column("target")
     private Map<String, Object> target;
 }

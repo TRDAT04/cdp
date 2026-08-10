@@ -1,8 +1,8 @@
 package vn.vnpost.cdp.customer_event.service;
 
-import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.common.exception.BusinessException;
 import vn.vnpost.cdp.customer_event.dto.EventFieldRequest;
 import vn.vnpost.cdp.customer_event.dto.EventSchemaRequest;
@@ -28,32 +28,36 @@ public class EventSchemaServiceImpl implements EventSchemaService {
 
     private final EventSchemaRepository eventSchemaRepository;
     private final UnomiClient unomiClient;
+
     @Override
-    @Transactional
-    public EventSchemaResponse save(EventSchemaRequest request) {
-        if (eventSchemaRepository.existsByEventTypeAndSchemaVersion(
-                request.getEventType(), request.getSchemaVersion())) {
-            throw new BusinessException("Schema already exists");
-        }
+    public Mono<EventSchemaResponse> save(EventSchemaRequest request) {
+        return eventSchemaRepository.existsByEventTypeAndSchemaVersion(
+                        request.getEventType(), request.getSchemaVersion())
+                .flatMap(exists -> {
+                    if (Boolean.TRUE.equals(exists)) {
+                        return Mono.error(new BusinessException("Schema already exists"));
+                    }
 
-        EventSchema schema = EventSchema.builder()
-                .schemaVersion(request.getSchemaVersion())
-                .eventType(request.getEventType())
-                .sourceSystem(request.getSourceSystem())
-                .description(request.getDescription())
-                .jsonSchema(buildJsonSchema(request))
-                .build();
+                    EventSchema schema = EventSchema.builder()
+                            .schemaVersion(request.getSchemaVersion())
+                            .eventType(request.getEventType())
+                            .sourceSystem(request.getSourceSystem())
+                            .description(request.getDescription())
+                            .jsonSchema(buildJsonSchema(request))
+                            .build();
 
-        EventSchema saved = eventSchemaRepository.save(schema);
-        unomiClient.createEventSchema(saved.getJsonSchema()).block();
-        return toResponse(saved);
+                    return eventSchemaRepository.save(schema)
+                            .flatMap(saved -> unomiClient.createEventSchema(saved.getJsonSchema())
+                                    .thenReturn(saved));
+                })
+                .map(this::toResponse);
     }
 
     @Override
-    public EventSchemaResponse getSchemaById(Long id) {
-        EventSchema entity = eventSchemaRepository.findById(id)
-                .orElseThrow(() -> new BusinessException("Schema not found"));
-        return toResponse(entity);
+    public Mono<EventSchemaResponse> getSchemaById(Long id) {
+        return eventSchemaRepository.findById(id)
+                .switchIfEmpty(Mono.error(new BusinessException("Schema not found")))
+                .map(this::toResponse);
     }
 
     private EventSchemaResponse toResponse(EventSchema entity) {

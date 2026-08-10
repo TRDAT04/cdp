@@ -1,42 +1,42 @@
 package vn.vnpost.cdp.profile.entity;
 
-import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
-import vn.vnpost.cdp.common.entity.BaseEntity;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
+import vn.vnpost.cdp.common.entity.BaseAuditFields;
 
 @Getter
 @Setter
-@Entity
-@Table(name = "profile_merge_rules")
-public class ProfileMergeRule extends BaseEntity {
+@Table("profile_merge_rules")
+public class ProfileMergeRule extends BaseAuditFields {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
+    @Column("id")
     private Long id;
 
-    @Column(name = "property_name", nullable = false, length = 200)
+    @Column("property_name")
     private String propertyName;
 
-    @Column(name = "source_system", length = 100)
+    @Column("source_system")
     private String sourceSystem;
 
-    @Column(name = "priority")
+    @Column("priority")
     private Integer priority;
 
-    @Column(name = "merge_strategy", length = 100)
+    @Column("merge_strategy")
     private String mergeStrategy;
 
-    @Column(name = "allow_overwrite")
+    @Column("allow_overwrite")
     private Boolean allowOverwrite;
 
-    @Column(name = "require_review")
+    @Column("require_review")
     private Boolean requireReview;
 
-    @Column(name = "description")
+    @Column("description")
     private String description;
 
-    @Column(name = "status", nullable = false)
+    @Column("status")
     private Short status = 1;
 }

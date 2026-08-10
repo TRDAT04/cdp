@@ -1,57 +1,54 @@
 package vn.vnpost.cdp.profile.entity;
 
-import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
-import vn.vnpost.cdp.common.entity.BaseEntity;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
+import vn.vnpost.cdp.common.entity.BaseAuditFields;
 
 import java.time.LocalDateTime;
 import java.util.Map;
 
 @Getter
 @Setter
-@Entity
-@Table(name = "profile_merge_requests")
-public class ProfileMergeRequest extends BaseEntity {
+@Table("profile_merge_requests")
+public class ProfileMergeRequest extends BaseAuditFields {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
+    @Column("id")
     private Long id;
 
-    @Column(name = "source_master_profile_id", nullable = false)
+    @Column("source_master_profile_id")
     private Long sourceMasterProfileId;
 
-    @Column(name = "target_master_profile_id", nullable = false)
+    @Column("target_master_profile_id")
     private Long targetMasterProfileId;
 
-    @Column(name = "merge_reason")
+    @Column("merge_reason")
     private String mergeReason;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "selected_values", columnDefinition = "jsonb")
+    @Column("selected_values")
     private Map<String, Object> selectedValues;
 
-    @Column(name = "status", nullable = false)
+    @Column("status")
     private Short status = 0;
 
-    @Column(name = "requested_by", length = 100)
+    @Column("requested_by")
     private String requestedBy;
 
-    @Column(name = "approved_by", length = 100)
+    @Column("approved_by")
     private String approvedBy;
 
-    @Column(name = "requested_at")
+    @Column("requested_at")
     private LocalDateTime requestedAt;
 
-    @Column(name = "approved_at")
+    @Column("approved_at")
     private LocalDateTime approvedAt;
 
-    @Column(name = "completed_at")
+    @Column("completed_at")
     private LocalDateTime completedAt;
 
-    @Column(name = "error_message")
+    @Column("error_message")
     private String errorMessage;
 }

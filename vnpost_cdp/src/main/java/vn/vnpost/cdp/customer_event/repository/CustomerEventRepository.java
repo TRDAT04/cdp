@@ -1,48 +1,37 @@
 package vn.vnpost.cdp.customer_event.repository;
 
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
-import org.springframework.data.jpa.repository.Modifying;
-import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.r2dbc.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 import org.springframework.stereotype.Repository;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.customer_event.entity.CustomerEvent;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
-import java.util.List;
 
 @Repository
-public interface CustomerEventRepository extends JpaRepository<CustomerEvent, Long>, JpaSpecificationExecutor<CustomerEvent> {
-
-    /**
-     * Chuyển toàn bộ event từ profile bị merge (source) sang profile còn lại (target).
-     *
-     * <p>Bắt buộc khi merge hồ sơ: mọi tab tra cứu event (Hành vi số, Dòng dịch vụ, CSKH,
-     * Consent, Summary) đều query thẳng theo {@code master_profile_id} và KHÔNG đi theo
-     * {@code merged_into_profile_id}. Nếu không re-point, event của source vẫn nằm trong DB
-     * nhưng không còn xuất hiện ở bất kỳ hồ sơ nào.
-     */
-    @Modifying(flushAutomatically = true)
-    @Query("update CustomerEvent e set e.masterProfileId = :targetId where e.masterProfileId = :sourceId")
-    int reassignMasterProfile(@Param("sourceId") Long sourceId, @Param("targetId") Long targetId);
+public interface CustomerEventRepository extends ReactiveCrudRepository<CustomerEvent, Long> {
 
     /**
      * 50 event gần nhất của một profile, mới nhất trước — dùng cho tab Hành vi số (detail).
      */
-    List<CustomerEvent> findTop50ByMasterProfileIdOrderByOccurredAtDesc(Long masterProfileId);
+    @Query("SELECT * FROM customer_events WHERE master_profile_id = :masterProfileId " +
+            "ORDER BY occurred_at DESC LIMIT 50")
+    Flux<CustomerEvent> findTop50ByMasterProfileIdOrderByOccurredAtDesc(@Param("masterProfileId") Long masterProfileId);
 
     /**
      * TOÀN BỘ event của một profile, mới nhất trước (KHÔNG giới hạn 50). Dùng cho các tính toán
      * cần đủ lịch sử (VD scoring: CLV/churn/engagement) thay vì bản top-50 của tab Hành vi số.
      */
-    List<CustomerEvent> findByMasterProfileIdOrderByOccurredAtDesc(Long masterProfileId);
+    Flux<CustomerEvent> findByMasterProfileIdOrderByOccurredAtDesc(Long masterProfileId);
 
     /**
      * Lấy event cho nhiều profile trong một query (tránh N+1 khi build danh sách).
      * Sắp xếp mới nhất trước để caller group theo masterProfileId và giữ thứ tự thời gian.
      */
-    List<CustomerEvent> findByMasterProfileIdInOrderByOccurredAtDesc(Collection<Long> masterProfileIds);
+    Flux<CustomerEvent> findByMasterProfileIdInOrderByOccurredAtDesc(Collection<Long> masterProfileIds);
 
     /**
      * RFM theo phương pháp phân vị CHUẨN ngành (percentile/quintile) trên TOÀN BỘ khách hàng.
@@ -63,8 +52,10 @@ public interface CustomerEventRepository extends JpaRepository<CustomerEvent, Lo
      * <p>Chạy được với số profile bất kỳ (kể cả 3-5): NTILE không lỗi khi ít dòng, chỉ là các bucket
      * cao có thể trống. Trả về 1 dòng của {@code :profileId}: {@code [recency_score, frequency_score, monetary_score]}.
      */
-    @Query(value = """
-            SELECT scored.recency_score, scored.frequency_score, scored.monetary_score
+    @Query("""
+            SELECT scored.recency_score AS recency_score,
+                   scored.frequency_score AS frequency_score,
+                   scored.monetary_score AS monetary_score
             FROM (
                 SELECT raw.mp_id,
                        NTILE(5) OVER (ORDER BY raw.recency_days DESC NULLS FIRST) AS recency_score,
@@ -86,8 +77,8 @@ public interface CustomerEventRepository extends JpaRepository<CustomerEvent, Lo
                 ) raw
             ) scored
             WHERE scored.mp_id = :profileId
-            """, nativeQuery = true)
-    List<Object[]> findRfmScores(@Param("profileId") Long profileId,
-                                 @Param("now") LocalDateTime now,
-                                 @Param("windowStart") LocalDateTime windowStart);
+            """)
+    Mono<RfmScoreRow> findRfmScores(@Param("profileId") Long profileId,
+                                    @Param("now") LocalDateTime now,
+                                    @Param("windowStart") LocalDateTime windowStart);
 }

@@ -2,6 +2,7 @@ package vn.vnpost.cdp.customer_event.service;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import reactor.core.publisher.Mono;
 
 import vn.vnpost.cdp.customer_event.dto.CustomerEventDetailResponse;
 import vn.vnpost.cdp.customer_event.dto.CustomerEventMessage;
@@ -9,9 +10,9 @@ import vn.vnpost.cdp.customer_event.dto.CustomerEventSearchRequest;
 
 public interface CustomerEventService {
 
-    void process(CustomerEventMessage message);
+    Mono<Void> process(CustomerEventMessage message);
 
-    Page<CustomerEventDetailResponse> searchEvents(
+    Mono<Page<CustomerEventDetailResponse>> searchEvents(
             CustomerEventSearchRequest request,
             Pageable pageable);
 }

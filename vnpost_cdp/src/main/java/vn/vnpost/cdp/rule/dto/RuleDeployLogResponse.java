@@ -23,7 +23,7 @@ public class RuleDeployLogResponse {
     private String errorMessage;
     private String deployedBy;
     private Instant deployedAt;
-    
+
     // Audit fields
     private String createdBy;
     private LocalDateTime created;

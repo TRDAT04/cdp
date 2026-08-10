@@ -1,23 +1,22 @@
 package vn.vnpost.cdp.customer_event.controller;
 
 import jakarta.validation.Valid;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
-import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
-
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 import vn.vnpost.cdp.common.response.MethodResult;
-import vn.vnpost.cdp.customer_event.dto.CustomerEventDetailResponse;
+
 import vn.vnpost.cdp.customer_event.dto.CustomerEventRequest;
-import vn.vnpost.cdp.customer_event.dto.CustomerEventResponse;
 import vn.vnpost.cdp.customer_event.dto.CustomerEventSearchRequest;
 import vn.vnpost.cdp.customer_event.producer.CustomerEventProducer;
 import vn.vnpost.cdp.customer_event.service.CustomerEventService;
+import vn.vnpost.shared.sercurity.CheckPermission;
 
-@Slf4j
 @RestController
 @RequestMapping("/api/v1/admin/customer-events")
 public class CustomerEventController {
@@ -32,26 +31,37 @@ public class CustomerEventController {
     }
 
     @PostMapping("/send")
-    public ResponseEntity<MethodResult> send(@Valid @RequestBody CustomerEventRequest request) {
-        log.info("POST /api/v1/customer-events/send - sourceSystem={}, sourceCustomerId={}, eventType={}",
-                request.getSourceSystem(),
-                request.getSourceCustomerId(),
-                request.getEventType());
+    @CheckPermission(index = 1, title = "Gửi Customer Event")
+    public Mono<ResponseEntity<MethodResult>> send(
+            @Valid @RequestBody CustomerEventRequest request) {
 
-        CustomerEventResponse response = customerEventProducer.send(request);
-        return ResponseEntity.ok(MethodResult.success(response));
+        return Mono.fromCallable(() -> customerEventProducer.send(request))
+                .subscribeOn(Schedulers.boundedElastic())
+                .map(response -> ResponseEntity.ok(
+                        MethodResult.success(response)
+                ));
     }
 
     @GetMapping
-    public ResponseEntity<MethodResult> searchEvents(
+    @CheckPermission(index = 2, title = "Xem Customer Event")
+    public Mono<ResponseEntity<MethodResult>> searchEvents(
             @ModelAttribute CustomerEventSearchRequest request,
-            @PageableDefault(sort = "occurredAt", direction = Sort.Direction.DESC) Pageable pageable) {
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String sort) {
 
-        log.info("GET /api/v1/customer-events - masterProfileId={}, eventType={}, timeRangeDays={}",
-                request.getMasterProfileId(), request.getEventType(), request.getTimeRangeDays());
+        Sort pageSort = StringUtils.hasText(sort)
+                ? Sort.by(Sort.Direction.DESC, sort)
+                : Sort.by(Sort.Direction.DESC, "occurredAt");
 
-        Page<CustomerEventDetailResponse> result = customerEventService.searchEvents(request, pageable);
+        Pageable pageable = PageRequest.of(page, size, pageSort);
 
-        return ResponseEntity.ok(MethodResult.success(result.getContent(), result.getTotalElements()));
+        return customerEventService.searchEvents(request, pageable)
+                .map(result -> ResponseEntity.ok(
+                        MethodResult.success(
+                                result.getContent(),
+                                result.getTotalElements()
+                        )
+                ));
     }
 }

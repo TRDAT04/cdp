@@ -10,7 +10,8 @@ import java.util.List;
  * khỏi hành vi hệ thống ngay lần đổi ngưỡng kế tiếp — mà đúng loại lệch đó là thứ người vận hành
  * không có cách nào phát hiện. Đổi ngưỡng thì đổi ở đây, cả hai phía tự khớp.
  *
- * <p>Xem {@code docs/profile-ingestion-data-flow.md} mục 5 để biết vì sao chọn các mốc này.
+ * <p>Xem {@code vnpost_cdp/docs/profile-ingestion-data-flow.md} mục 5 để biết vì sao chọn các mốc
+ * này — tài liệu nằm ở project gốc, bộ rule ở hai project phải giữ cùng con số.
  */
 public final class IdentityMatchThresholds {
 

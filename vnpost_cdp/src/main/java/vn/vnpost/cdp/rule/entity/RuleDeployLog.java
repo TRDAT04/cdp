@@ -1,57 +1,57 @@
 package vn.vnpost.cdp.rule.entity;
 
-
-import jakarta.persistence.*;
-import lombok.*;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
-import vn.vnpost.cdp.common.entity.BaseEntity;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
+import lombok.Setter;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
+import vn.vnpost.cdp.common.entity.BaseAuditFields;
 
 import java.time.Instant;
 import java.util.Map;
-
 
 @Getter
 @Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Entity
-@Table(name = "rule_deploy_logs")
-public class RuleDeployLog extends BaseEntity {
+@Table("rule_deploy_logs")
+public class RuleDeployLog extends BaseAuditFields {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column("id")
     private Long id;
 
-    @Column(name = "rule_id", length = 255)
+    @Column("rule_id")
     private String ruleId;
 
-    @Column(name = "rule_name", length = 255)
+    @Column("rule_name")
     private String ruleName;
 
-    @Column(name = "scope", length = 100)
+    @Column("scope")
     private String scope;
 
-    @Column(name = "event_type", length = 100)
+    @Column("event_type")
     private String eventType;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "payload_json", columnDefinition = "jsonb")
+    @Column("payload_json")
     private Map<String, Object> payloadJson;
 
-    @Column(name = "status", length = 50, nullable = false)
+    @Column("status")
     private String status;
 
-    @Column(name = "unomi_response", columnDefinition = "TEXT")
+    @Column("unomi_response")
     private String unomiResponse;
 
-    @Column(name = "error_message", columnDefinition = "TEXT")
+    @Column("error_message")
     private String errorMessage;
 
-    @Column(name = "deployed_by", length = 100)
+    @Column("deployed_by")
     private String deployedBy;
 
-    @Column(name = "deployed_at")
+    @Column("deployed_at")
     private Instant deployedAt;
 }

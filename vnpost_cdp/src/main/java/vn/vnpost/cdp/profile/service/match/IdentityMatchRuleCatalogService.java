@@ -25,6 +25,9 @@ import java.util.List;
  * <p><b>Vì sao 10 dòng chứ không phải 7:</b> code thật không có cấu trúc "7 rule, mỗi rule một
  * ngưỡng %". Thực tế là 6 rule tiền định (khớp tuyệt đối, KHÔNG có ngưỡng %), rồi 3 mốc điểm của
  * công thức cộng dồn, cộng một quy tắc xung đột đè lên tất cả. Bảng này mô tả đúng cấu trúc đó.
+ *
+ * <p>Dữ liệu hoàn toàn tĩnh (dựng từ hằng số, không truy vấn DB) nên service này trả về DTO thuần,
+ * không bọc {@code Mono} — không có I/O nào để chờ.
  */
 @Service
 public class IdentityMatchRuleCatalogService {

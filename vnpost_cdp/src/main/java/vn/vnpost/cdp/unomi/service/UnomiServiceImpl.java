@@ -7,10 +7,7 @@ import vn.vnpost.cdp.profile.entity.MasterProfile;
 import vn.vnpost.cdp.unomi.client.UnomiClient;
 import vn.vnpost.cdp.unomi.dto.UnomiEventRequest;
 import vn.vnpost.cdp.unomi.dto.UnomiProfileRequest;
-import vn.vnpost.cdp.unomi.dto.UnomiProfileResponse;
-import vn.vnpost.cdp.unomi.dto.UnomiProfileSearchResponse;
 
-import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
@@ -46,9 +43,6 @@ public class UnomiServiceImpl implements UnomiService {
         properties.put("unitCode", profile.getUnitCode());
         properties.put("unitName", profile.getUnitName());
         properties.put("status", profile.getStatus());
-        // Hồ sơ đã bị gộp: Unomi không có API delete nên giữ bản ghi nhưng đánh dấu rõ để
-        // segment/campaign loại trừ, tránh đếm trùng một khách hàng thành hai.
-        properties.put("mergedIntoProfileId", profile.getMergedIntoProfileId());
         properties.put(
                 "createdAt",
                 profile.getCreated()
@@ -69,6 +63,7 @@ public class UnomiServiceImpl implements UnomiService {
                 .doOnError(ex -> log.error("UnomiService - syncProfileToUnomi error: profileCode={}",
                         profile.getProfileCode(), ex));
     }
+
     @Override
     public Mono<Object> sendEventToUnomi(UnomiEventRequest request) {
         log.info("UnomiService - sendEventToUnomi: eventType={}, profileId={}",
@@ -80,29 +75,5 @@ public class UnomiServiceImpl implements UnomiService {
                         log.info("UnomiService - sendEventToUnomi success"))
                 .doOnError(ex ->
                         log.error("UnomiService - sendEventToUnomi error", ex));
-    }
-
-    @Override
-    public Mono<UnomiProfileSearchResponse> getProfiles(Integer offset, Integer limit) {
-        log.info("UnomiService - getProfiles: offset={}, limit={}", offset, limit);
-
-        return unomiClient.searchProfiles(offset, limit)
-                .doOnSuccess(response ->
-                        log.info("UnomiService - getProfiles success: total={}, returned={}",
-                                response.getTotalSize(),
-                                response.getList() != null ? response.getList().size() : 0))
-                .doOnError(ex ->
-                        log.error("UnomiService - getProfiles error", ex));
-    }
-    @Override
-    public Mono<UnomiProfileResponse> getProfileByItemId(String itemId) {
-
-        log.info("UnomiService - getProfileByItemId: itemId={}", itemId);
-
-        return unomiClient.getProfileByItemId(itemId)
-                .doOnSuccess(profile ->
-                        log.info("UnomiService - getProfileByItemId success: itemId={}", itemId))
-                .doOnError(ex ->
-                        log.error("UnomiService - getProfileByItemId error: itemId={}", itemId, ex));
     }
 }

@@ -8,6 +8,12 @@ import org.springframework.stereotype.Component;
 import vn.vnpost.cdp.ingestion.dto.ProfileIngestionMessage;
 import vn.vnpost.cdp.ingestion.service.ProfileIngestionService;
 
+/**
+ * Blocking spring-kafka {@code @KafkaListener} (giữ nguyên như bản gốc, KHÔNG đổi sang
+ * reactor-kafka). Consumer thread của container không phải event-loop của WebFlux nên
+ * {@code .block()} ở đây an toàn — chuỗi xử lý bên trong ({@code ProfileIngestionService.process})
+ * vẫn hoàn toàn reactive/non-blocking tới tận R2DBC/WebClient.
+ */
 @Slf4j
 @Component
 public class ProfileEventConsumer {
@@ -38,7 +44,7 @@ public class ProfileEventConsumer {
                 acknowledgment.acknowledge();
                 return;
             }
-            profileIngestionService.process(message);
+            profileIngestionService.process(message).block();
             acknowledgment.acknowledge();
             log.info("ProfileEventConsumer - processed and acknowledged: messageId={}", message.getMessageId());
         } catch (Exception ex) {

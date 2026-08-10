@@ -1,12 +1,11 @@
 package vn.vnpost.cdp.profile.entity;
 
-import jakarta.persistence.*;
 import lombok.Getter;
-import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
-import vn.vnpost.cdp.common.entity.BaseEntity;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
+import vn.vnpost.cdp.common.entity.BaseAuditFields;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -14,57 +13,52 @@ import java.util.Map;
 
 @Getter
 @Setter
-@NoArgsConstructor
-@Entity
-@Table(name = "profile_match_candidates")
-public class ProfileMatchCandidate extends BaseEntity {
+@Table("profile_match_candidates")
+public class ProfileMatchCandidate extends BaseAuditFields {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
+    @Column("id")
     private Long id;
 
-    @Column(name = "left_master_profile_id")
+    @Column("left_master_profile_id")
     private Long leftMasterProfileId;
 
-    @Column(name = "right_master_profile_id")
+    @Column("right_master_profile_id")
     private Long rightMasterProfileId;
 
-    @Column(name = "left_source_system", length = 100)
+    @Column("left_source_system")
     private String leftSourceSystem;
 
-    @Column(name = "left_source_customer_id", length = 255)
+    @Column("left_source_customer_id")
     private String leftSourceCustomerId;
 
-    @Column(name = "right_source_system", length = 100)
+    @Column("right_source_system")
     private String rightSourceSystem;
 
-    @Column(name = "right_source_customer_id", length = 255)
+    @Column("right_source_customer_id")
     private String rightSourceCustomerId;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "left_snapshot", columnDefinition = "jsonb")
+    @Column("left_snapshot")
     private Map<String, Object> leftSnapshot;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "right_snapshot", columnDefinition = "jsonb")
+    @Column("right_snapshot")
     private Map<String, Object> rightSnapshot;
 
-    @Column(name = "match_score", nullable = false, precision = 5, scale = 2)
+    @Column("match_score")
     private BigDecimal matchScore;
 
-    @Column(name = "match_level", length = 50)
+    @Column("match_level")
     private String matchLevel;
 
-    @Column(name = "status", nullable = false)
+    @Column("status")
     private Short status = 0;
 
-    @Column(name = "decision_by", length = 100)
+    @Column("decision_by")
     private String decisionBy;
 
-    @Column(name = "decision_at")
+    @Column("decision_at")
     private LocalDateTime decisionAt;
 
-    @Column(name = "merge_request_id")
+    @Column("merge_request_id")
     private Long mergeRequestId;
 }

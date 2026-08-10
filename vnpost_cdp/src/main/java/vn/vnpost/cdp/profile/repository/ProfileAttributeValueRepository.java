@@ -1,24 +1,29 @@
 package vn.vnpost.cdp.profile.repository;
 
-import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.r2dbc.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 import org.springframework.stereotype.Repository;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.profile.entity.ProfileAttributeValue;
 
 import java.util.Collection;
-import java.util.List;
-import java.util.Optional;
 
 @Repository
-public interface ProfileAttributeValueRepository extends JpaRepository<ProfileAttributeValue, Long> {
-    List<ProfileAttributeValue> findByMasterProfileId(Long masterProfileId);
+public interface ProfileAttributeValueRepository extends ReactiveCrudRepository<ProfileAttributeValue, Long> {
 
-    List<ProfileAttributeValue> findByMasterProfileIdAndPropertyName(Long masterProfileId, String propertyName);
+    Flux<ProfileAttributeValue> findByMasterProfileId(Long masterProfileId);
 
-    List<ProfileAttributeValue> findByMasterProfileIdAndIsSelected(Long masterProfileId, Boolean isSelected);
+    Flux<ProfileAttributeValue> findByMasterProfileIdAndPropertyName(Long masterProfileId, String propertyName);
 
-    Optional<ProfileAttributeValue> findTopByMasterProfileIdAndPropertyNameInOrderByReceivedAtDesc(
-            Long masterProfileId, Collection<String> propertyNames);
-
-    Optional<ProfileAttributeValue> findFirstByMasterProfileIdAndPropertyNameAndIsSelectedTrue(
+    Mono<ProfileAttributeValue> findFirstByMasterProfileIdAndPropertyNameAndIsSelectedTrue(
             Long masterProfileId, String propertyName);
+
+    @Query("SELECT * FROM profile_attribute_values " +
+            "WHERE master_profile_id = :masterProfileId AND property_name IN (:propertyNames) " +
+            "ORDER BY received_at DESC LIMIT 1")
+    Mono<ProfileAttributeValue> findTopByMasterProfileIdAndPropertyNameInOrderByReceivedAtDesc(
+            @Param("masterProfileId") Long masterProfileId,
+            @Param("propertyNames") Collection<String> propertyNames);
 }

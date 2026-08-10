@@ -8,6 +8,10 @@ import org.springframework.stereotype.Component;
 import vn.vnpost.cdp.customer_event.dto.CustomerEventMessage;
 import vn.vnpost.cdp.customer_event.service.CustomerEventService;
 
+/**
+ * Blocking spring-kafka {@code @KafkaListener} (giữ nguyên như bản gốc). Xem ghi chú ở
+ * {@link ProfileEventConsumer} về lý do {@code .block()} an toàn ở đây.
+ */
 @Slf4j
 @Component
 public class CustomerEventConsumer {
@@ -40,7 +44,7 @@ public class CustomerEventConsumer {
                 acknowledgment.acknowledge();
                 return;
             }
-            customerEventService.process(message);
+            customerEventService.process(message).block();
             acknowledgment.acknowledge();
             log.info("CustomerEventConsumer - processed and acknowledged: messageId={}",
                     message.getMessageId());

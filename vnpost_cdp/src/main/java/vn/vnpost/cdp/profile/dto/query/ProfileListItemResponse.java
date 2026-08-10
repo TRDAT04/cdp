@@ -65,4 +65,3 @@ public class ProfileListItemResponse {
 
     private Instant lastTransactionDate;
 }
-

@@ -1,5 +1,6 @@
 package vn.vnpost.cdp.profile.service;
 
+import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.profile.dto.query.ProfileScoringResponse;
 
 /**
@@ -9,7 +10,7 @@ public interface ScoringService {
 
     /**
      * @param id master_profiles.id
-     * @return điểm số của profile; ném {@code BusinessException("NOT_FOUND", ...)} nếu không tồn tại.
+     * @return điểm số của profile; phát {@code BusinessException("NOT_FOUND", ...)} nếu không tồn tại.
      */
-    ProfileScoringResponse getProfileScoring(Long id);
+    Mono<ProfileScoringResponse> getProfileScoring(Long id);
 }

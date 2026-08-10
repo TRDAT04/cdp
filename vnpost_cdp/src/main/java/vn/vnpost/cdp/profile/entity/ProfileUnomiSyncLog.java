@@ -1,51 +1,47 @@
 package vn.vnpost.cdp.profile.entity;
 
-import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
 
 import java.time.LocalDateTime;
 import java.util.Map;
 
 @Getter
 @Setter
-@Entity
-@Table(name = "profile_unomi_sync_logs")
+@Table("profile_unomi_sync_logs")
 public class ProfileUnomiSyncLog {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
+    @Column("id")
     private Long id;
 
-    @Column(name = "master_profile_id", nullable = false)
+    @Column("master_profile_id")
     private Long masterProfileId;
 
-    @Column(name = "profile_code", nullable = false, length = 100)
+    @Column("profile_code")
     private String profileCode;
 
-    @Column(name = "sync_type", length = 50)
+    @Column("sync_type")
     private String syncType;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "request_payload", columnDefinition = "jsonb")
+    @Column("request_payload")
     private Map<String, Object> requestPayload;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "response_payload", columnDefinition = "jsonb")
+    @Column("response_payload")
     private Map<String, Object> responsePayload;
 
-    @Column(name = "status", nullable = false)
+    @Column("status")
     private Short status = 0;
 
-    @Column(name = "error_message")
+    @Column("error_message")
     private String errorMessage;
 
-    @Column(name = "synced_at")
+    @Column("synced_at")
     private LocalDateTime syncedAt;
 
-    @Column(name = "created_by", length = 100)
+    @Column("created_by")
     private String createdBy;
 }

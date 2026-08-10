@@ -1,22 +1,23 @@
 package vn.vnpost.cdp.rule.service;
 
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.core.publisher.Mono;
 import vn.vnpost.cdp.common.exception.BusinessException;
-import vn.vnpost.cdp.config.UnomiProperties;
+import vn.vnpost.cdp.common.config.UnomiProperties;
 import vn.vnpost.cdp.rule.dto.*;
 import vn.vnpost.cdp.rule.entity.RuleDeployLog;
 import vn.vnpost.cdp.rule.repository.RuleDeployLogRepository;
-import vn.vnpost.cdp.security.SecurityUtils;
+import vn.vnpost.cdp.common.security.SecurityUtils;
 
 import java.time.Instant;
 import java.util.*;
@@ -33,7 +34,6 @@ public class RuleEngineServiceImpl implements RuleEngineService {
     private final WebClient unomiWebClient;
     private final UnomiProperties unomiProperties;
     private final RuleDeployLogRepository deployLogRepository;
-    private final ObjectMapper objectMapper;
 
     // ─────────────────────────────────────────────────────────────
     // Public API
@@ -57,78 +57,80 @@ public class RuleEngineServiceImpl implements RuleEngineService {
     }
 
     @Override
-    public DeployResult deployRule(RuleRequest request) {
+    public Mono<DeployResult> deployRule(RuleRequest request) {
         Map<String, Object> payload = buildRule(request);
 
+        @SuppressWarnings("unchecked")
         Map<String, Object> metadata = (Map<String, Object>) payload.get("metadata");
         String ruleId   = (String) metadata.get("id");
         String ruleName = (String) metadata.get("name");
         String scope    = (String) metadata.get("scope");
 
+        return SecurityUtils.getCurrentUsernameOrSystem().flatMap(deployedBy -> {
+            log.info("Deploying rule '{}' (scope={}) to Apache Unomi by '{}'", ruleId, scope, deployedBy);
+            log.debug("Unomi rule payload >>> {}", payload);
 
-        String deployedBy  = SecurityUtils.getCurrentUsername().orElse("system");
+            RuleDeployLog deployLog = RuleDeployLog.builder()
+                    .ruleId(ruleId)
+                    .ruleName(ruleName)
+                    .scope(scope)
+                    .eventType(request.getEventType())
+                    .payloadJson(payload)
+                    .deployedBy(deployedBy)
+                    .deployedAt(Instant.now())
+                    .build();
 
-        log.info("Deploying rule '{}' (scope={}) to Apache Unomi by '{}'", ruleId, scope, deployedBy);
-        log.debug("Unomi rule payload >>> {}", payload);
-
-        RuleDeployLog deployLog = RuleDeployLog.builder()
-                .ruleId(ruleId)
-                .ruleName(ruleName)
-                .scope(scope)
-                .eventType(request.getEventType())
-                .payloadJson(payload)
-                .deployedBy(deployedBy)
-                .deployedAt(Instant.now())
-                .build();
-
-        try {
-            String unomiResponse = unomiWebClient.post()
+            return unomiWebClient.post()
                     .uri("/cxs/rules")
                     .bodyValue(payload)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block();
+                    .flatMap(unomiResponse -> {
+                        deployLog.setStatus("SUCCESS");
+                        deployLog.setUnomiResponse(unomiResponse);
+                        return deployLogRepository.save(deployLog)
+                                .doOnNext(saved -> log.info("Successfully deployed rule '{}'", ruleId))
+                                .thenReturn(new DeployResult(ruleId, "SUCCESS", unomiResponse,
+                                        deployLog.getDeployedAt()));
+                    })
+                    .onErrorResume(WebClientResponseException.class, e -> {
+                        String errorBody = e.getResponseBodyAsString();
+                        log.error("Failed to deploy rule '{}'. Unomi returned HTTP {}: {}",
+                                ruleId, e.getStatusCode(), errorBody);
 
-            deployLog.setStatus("SUCCESS");
-            deployLog.setUnomiResponse(unomiResponse);
-            deployLogRepository.save(deployLog);
+                        deployLog.setStatus("FAILED");
+                        deployLog.setErrorMessage("HTTP " + e.getStatusCode() + " — " + errorBody);
+                        return deployLogRepository.save(deployLog)
+                                .then(Mono.error(new BusinessException("RULE_DEPLOY_ERROR",
+                                        "Failed to deploy rule to Unomi. Status: " + e.getStatusCode())));
+                    })
+                    .onErrorResume(ex -> !(ex instanceof BusinessException), ex -> {
+                        log.error("Failed to deploy rule '{}'. Error: {}", ruleId, ex.getMessage(), ex);
 
-            log.info("Successfully deployed rule '{}'", ruleId);
-            return new DeployResult(ruleId, "SUCCESS", unomiResponse, deployLog.getDeployedAt());
-
-        } catch (WebClientResponseException e) {
-            String errorBody = e.getResponseBodyAsString();
-            log.error("Failed to deploy rule '{}'. Unomi returned HTTP {}: {}", ruleId, e.getStatusCode(), errorBody);
-
-            deployLog.setStatus("FAILED");
-            deployLog.setErrorMessage("HTTP " + e.getStatusCode() + " — " + errorBody);
-            deployLogRepository.save(deployLog);
-
-            throw new BusinessException("RULE_DEPLOY_ERROR",
-                    "Failed to deploy rule to Unomi. Status: " + e.getStatusCode());
-
-        } catch (Exception e) {
-            log.error("Failed to deploy rule '{}'. Error: {}", ruleId, e.getMessage(), e);
-
-            deployLog.setStatus("FAILED");
-            deployLog.setErrorMessage(e.getMessage());
-            deployLogRepository.save(deployLog);
-
-            throw new BusinessException("RULE_DEPLOY_ERROR", "Failed to deploy rule to Unomi: " + e.getMessage());
-        }
+                        deployLog.setStatus("FAILED");
+                        deployLog.setErrorMessage(ex.getMessage());
+                        return deployLogRepository.save(deployLog)
+                                .then(Mono.error(new BusinessException("RULE_DEPLOY_ERROR",
+                                        "Failed to deploy rule to Unomi: " + ex.getMessage())));
+                    });
+        });
     }
 
     @Override
-    public Page<RuleDeployLogResponse> getAllRuleLogs(Pageable pageable) {
-        return deployLogRepository.findAllByOrderByDeployedAtDesc(pageable)
-                .map(this::mapToResponse);
-    }
-
-    @Override
-    public List<RuleDeployLogResponse> getRuleLogsByRuleId(String ruleId) {
-        return deployLogRepository.findByRuleIdOrderByDeployedAtDesc(ruleId).stream()
+    public Mono<Page<RuleDeployLogResponse>> getAllRuleLogs(Pageable pageable) {
+        Mono<List<RuleDeployLogResponse>> contentMono = deployLogRepository
+                .findAllByOrderByDeployedAtDesc(pageable)
                 .map(this::mapToResponse)
-                .toList();
+                .collectList();
+        return Mono.zip(contentMono, deployLogRepository.countAll())
+                .map(t -> new PageImpl<>(t.getT1(), pageable, t.getT2()));
+    }
+
+    @Override
+    public Mono<List<RuleDeployLogResponse>> getRuleLogsByRuleId(String ruleId) {
+        return deployLogRepository.findByRuleIdOrderByDeployedAtDesc(ruleId)
+                .map(this::mapToResponse)
+                .collectList();
     }
 
     private RuleDeployLogResponse mapToResponse(RuleDeployLog log) {

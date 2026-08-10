@@ -1,9 +1,11 @@
 package vn.vnpost.cdp.profile.service;
 
+import reactor.core.publisher.Mono;
+
 import java.time.LocalDateTime;
 
 public interface ProfileMergeEngineService {
-    boolean shouldOverwrite(
+    Mono<Boolean> shouldOverwrite(
             Long masterProfileId,
             String propertyName,
             String incomingSource,

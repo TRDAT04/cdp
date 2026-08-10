@@ -1,34 +1,40 @@
 package vn.vnpost.cdp.customer_event.entity;
 
-import jakarta.persistence.*;
-import lombok.*;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
 
 import java.util.Map;
 
-@Entity
+@Table("event_schemas")
 @Builder
 @Getter
 @Setter
-@Table(name = "event_schemas")
 @NoArgsConstructor
 @AllArgsConstructor
 public class EventSchema {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column("id")
     private Long id;
 
+    @Column("schema_version")
     private String schemaVersion;
 
+    @Column("event_type")
     private String eventType;
 
+    @Column("source_system")
     private String sourceSystem;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(columnDefinition = "jsonb", nullable = false)
+    @Column("json_schema")
     private Map<String, Object> jsonSchema;
 
+    @Column("description")
     private String description;
 }

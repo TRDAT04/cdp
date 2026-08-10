@@ -1,48 +1,48 @@
 package vn.vnpost.cdp.profile.entity;
 
-import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
-import vn.vnpost.cdp.common.entity.BaseEntity;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
+import vn.vnpost.cdp.common.entity.BaseAuditFields;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Getter
 @Setter
-@Entity
-@Table(name = "profile_attribute_values")
-public class ProfileAttributeValue extends BaseEntity {
+@Table("profile_attribute_values")
+public class ProfileAttributeValue extends BaseAuditFields {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
+    @Column("id")
     private Long id;
 
-    @Column(name = "master_profile_id", nullable = false)
+    @Column("master_profile_id")
     private Long masterProfileId;
 
-    @Column(name = "source_record_id")
+    @Column("source_record_id")
     private Long sourceRecordId;
 
-    @Column(name = "source_system", length = 100)
+    @Column("source_system")
     private String sourceSystem;
 
-    @Column(name = "property_name", length = 200)
+    @Column("property_name")
     private String propertyName;
 
-    @Column(name = "property_value")
+    @Column("property_value")
     private String propertyValue;
 
-    @Column(name = "normalized_value")
+    @Column("normalized_value")
     private String normalizedValue;
 
-    @Column(name = "confidence_score", precision = 5, scale = 2)
+    @Column("confidence_score")
     private BigDecimal confidenceScore;
 
-    @Column(name = "is_selected")
+    @Column("is_selected")
     private Boolean isSelected;
 
-    @Column(name = "received_at")
+    @Column("received_at")
     private LocalDateTime receivedAt;
 }

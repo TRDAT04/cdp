@@ -1,7 +1,7 @@
 # ── Stage 1: extract layered JAR ──────────────────────────────────────────────
 FROM eclipse-temurin:21-jre-alpine AS builder
 WORKDIR /build
-COPY target/vnpost_cdp-1.0.0-SNAPSHOT.jar app.jar
+COPY target/vnpexample-0.0.1-SNAPSHOT.jar app.jar
 RUN java -Djarmode=layertools -jar app.jar extract
 
 # ── Stage 2: runtime image ────────────────────────────────────────────────────
