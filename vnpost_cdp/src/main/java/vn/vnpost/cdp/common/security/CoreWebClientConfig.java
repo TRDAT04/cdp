@@ -10,13 +10,14 @@ import org.springframework.web.reactive.function.client.WebClient;
 @Configuration
 public class CoreWebClientConfig {
 
-    @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}")
-    private String issuerUri;
+    /** Base URL nội bộ (Docker network) để gọi Core API. */
+    @Value("${core.baseUrl}")
+    private String coreBaseUrl;
 
     @Bean("coreClient")
     public WebClient webClient() {
         return WebClient.builder()
-                .baseUrl(issuerUri)
+                .baseUrl(coreBaseUrl)
                 .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
                 .build();
     }

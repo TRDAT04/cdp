@@ -1,12 +1,14 @@
 # ── Stage 1: extract layered JAR ──────────────────────────────────────────────
 FROM eclipse-temurin:21-jre-alpine AS builder
 WORKDIR /build
-COPY target/vnpexample-0.0.1-SNAPSHOT.jar app.jar
+COPY target/vnpcdp-0.0.1-SNAPSHOT.jar app.jar
 RUN java -Djarmode=layertools -jar app.jar extract
 
 # ── Stage 2: runtime image ────────────────────────────────────────────────────
 FROM eclipse-temurin:21-jre-alpine
 EXPOSE 9000
+
+RUN apk add --no-cache curl
 
 # Non-root user — không chạy container bằng root
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup

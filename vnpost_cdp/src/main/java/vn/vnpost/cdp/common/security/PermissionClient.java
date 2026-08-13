@@ -24,8 +24,8 @@ public class PermissionClient {
     @Value("${core.validToken}")
     String validToken;
 
-    @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}")
-    String issuerUri;
+    @Value("${core.baseUrl}")
+    String coreBaseUrl;
 
     final WebClient permissionWebClient;
 
@@ -54,7 +54,7 @@ public class PermissionClient {
 
     @SuppressWarnings("unchecked")
     public Mono<List<String>> getPermissions(String token) {
-        log.info("Calling permission API: {}", issuerUri + endPoint);
+        log.info("Calling permission API: {}", coreBaseUrl + endPoint);
 
         return permissionWebClient.get()
                 .uri(endPoint)
